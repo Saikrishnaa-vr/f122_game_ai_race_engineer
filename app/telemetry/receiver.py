@@ -151,12 +151,20 @@ def log_report(stats: ReceptionStats, now: float, *, final: bool = False) -> str
 def process_packet(stats: ReceptionStats, state: RaceState, data: bytes, now: float) -> PacketHeader | None:
     header = stats.record(data, now)
     if header is not None:
+        previous_uid, previous_player = state.session_uid, state.player_index
         try:
             state.apply(data, header, now)
         except PacketError as exc:
             stats.payload_invalid += 1
             stats.errors[f"payload_{exc.reason}"] += 1
             stats.last_error = str(exc)
+        else:
+            if previous_uid is not None and (previous_uid != state.session_uid
+                                            or previous_player != state.player_index):
+                LOGGER.info("telemetry event=state_reset old_uid=%s new_uid=%s "
+                            "old_player=%s new_player=%s packet_id=%d session_time=%.2f",
+                            previous_uid, state.session_uid, previous_player,
+                            state.player_index, header.packet_id, header.session_time)
     return header
 
 
@@ -226,6 +234,8 @@ def run_receiver(
         capture = CaptureWriter(record_name) if record_name is not None else None
         capture_summary = (RecordingSummary(record_name) if record_name is not None else None)
         auto_recorder = AutoRaceRecorder(output) if auto_record else None
+        connection_status = stats.status(started)
+        next_recording_diagnostic_at = started + 30.0
         history = None
         if history_path is not None:
             try:
@@ -276,14 +286,27 @@ def run_receiver(
                         try:
                             has_room = capture.write(now - started, data)
                         except OSError as exc:
-                            LOGGER.warning("Recording failed: %s", exc)
-                            has_room = False
-                        if not has_room:
+                            LOGGER.exception("recording event=manual_write_error name=%s bytes=%d error=%s",
+                                             record_name, capture.size, exc)
                             capture.close()
                             capture = None
                             if capture_summary is not None:
                                 try:
-                                    save_summary(capture_summary, "size_limit")
+                                    save_summary(capture_summary, "incomplete", "write_error")
+                                except OSError as metadata_exc:
+                                    LOGGER.warning("Could not save recording metadata: %s", metadata_exc)
+                                capture_summary = None
+                            print("Recording stopped after a write error; telemetry reception continues.",
+                                  file=output, flush=True)
+                            has_room = True
+                        if not has_room:
+                            LOGGER.warning("recording event=manual_size_limit name=%s bytes=%d "
+                                           "limit_bytes=%d", record_name, capture.size, capture.max_bytes)
+                            capture.close()
+                            capture = None
+                            if capture_summary is not None:
+                                try:
+                                    save_summary(capture_summary, "size_limit", "size_limit")
                                 except OSError as exc:
                                     LOGGER.warning("Could not save recording metadata: %s", exc)
                                 capture_summary = None
@@ -292,11 +315,18 @@ def run_receiver(
                             LOGGER.warning(message)
                     previous_status = stats.status(now)
                     header = process_packet(stats, state, data, now)
+                    if header is None and auto_recorder is not None:
+                        auto_recorder.reject(stats.last_error or "invalid_packet")
                     if header is not None and capture_summary is not None:
                         capture_summary.observe(now - started, data, header)
                     if header is not None and auto_recorder is not None:
-                        session_observation = state.get_fresh(1, now)
+                        session_observation = state.get_fresh(1, now) if header.packet_id == 1 else None
+                        # Only this datagram's successfully decoded Session may
+                        # start or switch a capture. A malformed Session header
+                        # can otherwise inherit the previous cached Session.
                         session = (session_observation.value if session_observation is not None
+                                   and session_observation.observed_at == now
+                                   and session_observation.header == header
                                    and isinstance(session_observation.value, Session) else None)
                         auto_recorder.observe(now, data, header, session)
                     latest = state.get_fresh(header.packet_id, now) if header is not None and header.packet_id in (1, 7, 10) else None
@@ -326,8 +356,20 @@ def run_receiver(
                         LOGGER.info(message)
 
                 now = time.monotonic()
+                current_status = stats.status(now)
+                if current_status != connection_status:
+                    LOGGER.info("telemetry event=connection_%s previous=%s uid=%s "
+                                "last_valid_age_s=%s valid=%d invalid=%d",
+                                current_status, connection_status,
+                                stats.last_header.session_uid if stats.last_header else None,
+                                round(now - stats.last_valid_at, 1) if stats.last_valid_at is not None else None,
+                                stats.valid, stats.invalid)
+                    connection_status = current_status
                 if auto_recorder is not None:
                     auto_recorder.tick(now)
+                    if now >= next_recording_diagnostic_at:
+                        auto_recorder.diagnostics(now)
+                        next_recording_diagnostic_at = now + 30.0
                 if (dashboard and not performance_mode or radio is not None) and now - last_facts_at >= 0.5:
                     try:
                         dashboard_state.publish(race_facts(state, engineer, now),

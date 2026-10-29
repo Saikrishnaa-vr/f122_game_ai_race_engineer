@@ -32,7 +32,7 @@ async function load(){
  try{const response=await fetch('/api/replays',{cache:'no-store'});if(!response.ok)throw Error(await response.text());const items=await response.json();status.textContent=`${items.length} recording${items.length===1?'':'s'} found`;
   if(!items.length){list.className='empty';list.textContent='No recordings yet. Start Race Engineer.cmd will save a Grand Prix when the game sends telemetry, or place an existing .f1cap file in the recordings folder.';return}
   for(const item of items){const card=document.createElement('article'),heading=document.createElement('h3'),chip=document.createElement('span'),filename=document.createElement('div'),button=document.createElement('button');heading.textContent=item.track;chip.className='chip'+(item.status==='completed'?'':' partial');chip.textContent=String(item.status).replaceAll('_',' ');filename.className='file';filename.textContent=item.name;button.type='button';button.textContent='Open replay';button.onclick=()=>openRace(item,button);
-   if(item.session_type!==10){button.disabled=true;button.textContent='No Grand Prix data'}
+   if(![10,11,12].includes(item.session_type)){button.disabled=true;button.textContent='No race data'}
    card.append(heading,line(date(item.started_at)),line(item.location||'Location unknown',item.player_name||'Driver unknown'),line(item.last_lap?`Lap ${item.last_lap}${item.total_laps?` / ${item.total_laps}`:''}`:'Lap unavailable',item.finish_position?`Last observed P${item.finish_position}`:'Position unavailable'),chip,filename,button);list.append(card)}
  }catch(error){status.className='error';status.textContent=`Could not list recordings: ${error.message}`}
 }load();

@@ -2,6 +2,7 @@
 
 from io import StringIO
 import json
+import logging
 from pathlib import Path
 import struct
 from threading import Thread
@@ -24,11 +25,11 @@ def isolate_recordings(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(capture, "CAPTURE_DIRECTORY", tmp_path / "recordings")
 
 
-def session_packet(packet_factory, uid: int) -> bytes:
+def session_packet(packet_factory, uid: int, session_type: int = 10) -> bytes:
     data = bytearray(packet_factory(1, size=632, session_uid=uid))
     data[24 + 3] = 14
     struct.pack_into("<H", data, 24 + 4, 5412)
-    data[24 + 6] = 10
+    data[24 + 6] = session_type
     struct.pack_into("<b", data, 24 + 7, 3)
     return bytes(data)
 
@@ -36,6 +37,13 @@ def session_packet(packet_factory, uid: int) -> bytes:
 def packet_event(packet_factory, uid: int, code: bytes) -> bytes:
     data = bytearray(packet_factory(3, size=40, session_uid=uid))
     data[24:28] = code
+    return bytes(data)
+
+
+def lap_packet(packet_factory, uid: int, lap: int) -> bytes:
+    data = bytearray(packet_factory(2, size=972, session_uid=uid, session_time=lap * 90.0,
+                                    frame=lap * 100))
+    struct.pack_into("<7B", data, 24 + 2 * 43 + 24, 5, lap, 0, 0, 0, 0, 0)
     return bytes(data)
 
 
@@ -72,8 +80,162 @@ def test_auto_recording_waits_for_race_and_saves_after_classification(packet_fac
     recorder.close()
     items = list_recordings()
     assert len(items) == 2
-    assert {item["status"] for item in items} == {"completed", "stopped"}
+    assert {item["status"] for item in items} == {"completed", "incomplete"}
     assert items[0]["name"] != items[1]["name"]
+
+
+@pytest.mark.parametrize("session_type", [10, 11, 12])
+def test_race_continues_past_lap_two_through_pause_and_lobby_packets(packet_factory,
+                                                                       session_type: int) -> None:
+    recorder = AutoRaceRecorder(StringIO())
+    race = session_packet(packet_factory, 501, session_type)
+    session = decode_payload(race, decode_packet(race))
+    packets = [race]
+    recorder.observe(0.0, race, decode_packet(race), session)
+    for lap in (1, 2):
+        packet = lap_packet(packet_factory, 501, lap)
+        packets.append(packet)
+        recorder.observe(float(lap), packet, decode_packet(packet), None)
+    # Connection loss and unrelated lobby traffic cannot terminate this race.
+    recorder.tick(30.0)
+    lobby = packet_event(packet_factory, 0, b"BUTN")
+    recorder.observe(31.0, lobby, decode_packet(lobby), None)
+    assert recorder.writer is not None
+    for lap in (3, 4, 5):
+        packet = lap_packet(packet_factory, 501, lap)
+        packets.append(packet)
+        recorder.observe(31.0 + lap, packet, decode_packet(packet), None)
+    recorder.close()
+    [item] = list_recordings()
+    assert item["last_lap"] == 5
+    assert item["session_type"] == session_type
+    assert item["status"] == "incomplete"
+    assert item["stop_reason"] == "stopped"
+    assert [data for _elapsed, data in capture.read_capture(item["name"])] == packets
+
+
+def test_genuine_new_race_is_separate_and_ended_session_is_identified(packet_factory) -> None:
+    recorder = AutoRaceRecorder(StringIO())
+    first = session_packet(packet_factory, 601)
+    recorder.observe(0.0, first, decode_packet(first), decode_payload(first, decode_packet(first)))
+    ended = packet_event(packet_factory, 601, b"SEND")
+    recorder.observe(2.0, ended, decode_packet(ended), None)
+    recorder.tick(10.0)
+    assert recorder.writer is not None
+    second = session_packet(packet_factory, 602, 11)
+    recorder.observe(11.0, second, decode_packet(second), decode_payload(second, decode_packet(second)))
+    recorder.close()
+    items = list_recordings()
+    assert len(items) == 2
+    by_uid = {item["session_uid"]: item for item in items}
+    assert by_uid[601]["status"] == "ended"
+    assert by_uid[601]["stop_reason"] == "session_changed"
+    assert by_uid[602]["status"] == "incomplete"
+    assert [data for _time, data in capture.read_capture(by_uid[602]["name"])] == [second]
+
+
+def test_auto_capture_rolls_over_without_losing_boundary_packet(packet_factory,
+                                                                  monkeypatch) -> None:
+    monkeypatch.setattr(capture, "MAX_AUTO_CAPTURE_BYTES", 1700)
+    recorder = AutoRaceRecorder(StringIO())
+    race = session_packet(packet_factory, 701)
+    first_lap = lap_packet(packet_factory, 701, 1)
+    second_lap = lap_packet(packet_factory, 701, 2)
+    recorder.observe(0.0, race, decode_packet(race), decode_payload(race, decode_packet(race)))
+    recorder.observe(1.0, first_lap, decode_packet(first_lap), None)
+    recorder.observe(2.0, second_lap, decode_packet(second_lap), None)
+    recorder.close()
+    items = list_recordings()
+    assert len(items) == 2
+    first = next(item for item in items if item["status"] == "continued")
+    second = next(item for item in items if item["continued_from"] == first["name"])
+    assert first["stop_reason"] == "size_limit"
+    assert second["status"] == "incomplete"
+    assert [data for _time, data in capture.read_capture(first["name"])] == [race, first_lap]
+    assert [data for _time, data in capture.read_capture(second["name"])] == [race, second_lap]
+
+
+def test_same_uid_race_restart_after_send_gets_its_own_capture(packet_factory) -> None:
+    recorder = AutoRaceRecorder(StringIO())
+    first = session_packet(packet_factory, 801)
+    recorder.observe(0.0, first, decode_packet(first), decode_payload(first, decode_packet(first)))
+    lap = lap_packet(packet_factory, 801, 2)
+    recorder.observe(1.0, lap, decode_packet(lap), None)
+    ended = packet_event(packet_factory, 801, b"SEND")
+    recorder.observe(2.0, ended, decode_packet(ended), None)
+    restarted = bytearray(session_packet(packet_factory, 801))
+    struct.pack_into("<f", restarted, 14, 0.0)
+    restarted = bytes(restarted)
+    recorder.observe(5.0, restarted, decode_packet(restarted),
+                     decode_payload(restarted, decode_packet(restarted)))
+    lap_three = lap_packet(packet_factory, 801, 3)
+    recorder.observe(6.0, lap_three, decode_packet(lap_three), None)
+    recorder.close()
+    items = list_recordings()
+    assert len(items) == 2
+    first_item = next(item for item in items if item["status"] == "ended")
+    second_item = next(item for item in items if item["status"] == "incomplete")
+    assert first_item["stop_reason"] == "session_restarted"
+    assert [data for _time, data in capture.read_capture(first_item["name"])] == [first, lap, ended]
+    assert [data for _time, data in capture.read_capture(second_item["name"])] == [restarted, lap_three]
+
+
+def test_recorder_requires_current_session_packet_and_reports_health(packet_factory,
+                                                                      caplog) -> None:
+    caplog.set_level(logging.INFO, logger="f1_race_engineer")
+    recorder = AutoRaceRecorder(StringIO())
+    race = session_packet(packet_factory, 901)
+    session = decode_payload(race, decode_packet(race))
+    unrelated = packet_event(packet_factory, 901, b"BUTN")
+    recorder.observe(0.0, unrelated, decode_packet(unrelated), session)
+    assert recorder.writer is None  # A stale Session observation cannot start a file.
+    recorder.reject("header needs 24 bytes")
+    recorder.observe(1.0, race, decode_packet(race), session)
+    recorder.diagnostics(2.0)
+    recorder.close()
+    messages = [record.message for record in caplog.records]
+    assert any("event=packet_rejected" in message and "rejected=1" in message
+               for message in messages)
+    assert any("event=health" in message and "accepted=1" in message
+               and "rejected=1" in message and "bytes=650" in message
+               for message in messages)
+    assert any("event=stop" in message and "status=incomplete" in message
+               for message in messages)
+
+
+def test_same_uid_race_type_change_is_a_new_recording(packet_factory) -> None:
+    recorder = AutoRaceRecorder(StringIO())
+    first = session_packet(packet_factory, 902, 10)
+    next_race = session_packet(packet_factory, 902, 11)
+    for now, packet in ((0.0, first), (2.0, next_race)):
+        recorder.observe(now, packet, decode_packet(packet),
+                         decode_payload(packet, decode_packet(packet)))
+    recorder.close()
+    items = list_recordings()
+    assert len(items) == 2
+    assert {item["session_type"] for item in items} == {10, 11}
+    assert {item["stop_reason"] for item in items} == {"session_changed", "stopped"}
+
+
+def test_same_uid_restart_after_ended_file_was_closed(packet_factory) -> None:
+    recorder = AutoRaceRecorder(StringIO())
+    first = session_packet(packet_factory, 903)
+    recorder.observe(0.0, first, decode_packet(first), decode_payload(first, decode_packet(first)))
+    lap = lap_packet(packet_factory, 903, 2)
+    recorder.observe(1.0, lap, decode_packet(lap), None)
+    ended = packet_event(packet_factory, 903, b"SEND")
+    recorder.observe(2.0, ended, decode_packet(ended), None)
+    recorder.tick(63.0)
+    assert recorder.writer is None
+    restarted = bytearray(session_packet(packet_factory, 903))
+    struct.pack_into("<f", restarted, 14, 0.0)
+    restarted = bytes(restarted)
+    recorder.observe(64.0, restarted, decode_packet(restarted),
+                     decode_payload(restarted, decode_packet(restarted)))
+    recorder.close()
+    items = list_recordings()
+    assert len(items) == 2
+    assert {item["status"] for item in items} == {"ended", "incomplete"}
 
 
 def test_legacy_recording_is_indexed_without_modifying_it(packet_factory) -> None:
