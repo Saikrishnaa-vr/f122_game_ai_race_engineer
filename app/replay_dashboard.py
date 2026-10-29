@@ -22,6 +22,7 @@ from .strategy import StrategyAssumptions
 from .telemetry.capture import read_capture
 from .telemetry.receiver import ReceptionStats, process_packet
 from .telemetry.state import RaceState
+from .race_timeline import STALE_SECONDS
 
 
 LIBRARY_HTML = (Path(__file__).parent / "replay_library.html").read_text(encoding="utf-8")
@@ -45,7 +46,29 @@ def load_frames(name: str, pit_loss_seconds: float | None = None,
     dashboard = DashboardState()
     frames: list[ReplayFrame] = []
     last_publish = -interval_seconds
+
+    def publish(now: float, *, force: bool = False) -> None:
+        nonlocal last_publish
+        if not force and now - last_publish < interval_seconds:
+            return
+        last_publish = now
+        session_obs, lap_obs = state.observations.get(1), state.observations.get(2)
+        if (session_obs is None or lap_obs is None
+                or session_obs.value.session_type not in DRIVING_SESSION_TYPES):
+            return
+        facts = race_facts(state, engineer, now)
+        connection = "stale" if facts["race_phase"]["status"] == "STALE" else stats.status(now)
+        dashboard.publish(facts, connection, False)
+        frames.append(ReplayFrame(now, lap_obs.value.lap_number,
+                                  zlib.compress(dashboard.snapshot().encode("utf-8"), level=3)))
+
     for now, datagram in read_capture(name):
+        previous_packet_at = state.timeline.last_packet_at
+        if previous_packet_at is not None and now - previous_packet_at > STALE_SECONDS:
+            # This frame reports absence of packets; it contains no invented
+            # vehicle observations. Playback holds it until the real resume.
+            publish(previous_packet_at + STALE_SECONDS, force=True)
+        previous_generation = state.timeline.generation
         header = process_packet(stats, state, datagram, now)
         if header is None:
             continue
@@ -53,17 +76,7 @@ def load_frames(name: str, pit_loss_seconds: float | None = None,
         if latest is not None and latest.header.frame_identifier == header.frame_identifier:
             for alert in engineer.on_packet(state, now):
                 dashboard.message(alert.message)
-        if now - last_publish < interval_seconds:
-            continue
-        last_publish = now
-        facts = race_facts(state, engineer, now)
-        session = facts["fields"].get("session")
-        lap = facts["fields"].get("lap")
-        if not session or not lap or session["value"]["session_type"] not in DRIVING_SESSION_TYPES:
-            continue
-        dashboard.publish(facts, stats.status(now), False)
-        frames.append(ReplayFrame(now, lap["value"]["lap_number"],
-                                  zlib.compress(dashboard.snapshot().encode("utf-8"), level=3)))
+        publish(now, force=state.timeline.generation != previous_generation)
     if not frames:
         raise ValueError("capture has no driving-session dashboard frames")
     return frames

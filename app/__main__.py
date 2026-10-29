@@ -30,7 +30,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="observed lap-time cost per tyre wear percentage point")
     parser.add_argument("--next-compound", type=int, metavar="CODE", help="planned next F1 22 compound code")
     parser.add_argument("--safety-car-pit-factor", type=float, metavar="0_TO_1",
-                        help="calibrated safety-car pit loss divided by normal loss")
+                        help="calibrated full Safety Car pit loss divided by normal loss")
+    parser.add_argument("--vsc-pit-factor", type=float, metavar="0_TO_1",
+                        help="calibrated VSC pit loss divided by normal loss")
     parser.add_argument("--traffic-loss", type=float, metavar="SECONDS", help="estimated traffic cost per stop")
     parser.add_argument("--second-compound", type=int, metavar="CODE", help="enable modelled two-stop plans")
     parser.add_argument("--strategy-profile", choices=("conservative", "balanced", "aggressive"),
@@ -73,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
                                        wear_cost_seconds_per_percent=args.wear_pace_cost,
                                        next_compound_code=args.next_compound,
                                        safety_car_pit_loss_factor=args.safety_car_pit_factor,
+                                       vsc_pit_loss_factor=args.vsc_pit_factor,
                                        traffic_loss_seconds=args.traffic_loss,
                                        second_compound_code=args.second_compound,
                                        profile=args.strategy_profile)

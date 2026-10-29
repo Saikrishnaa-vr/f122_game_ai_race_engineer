@@ -24,17 +24,21 @@ class StrategyAssumptions:
     traffic_loss_seconds: float | None = None
     second_compound_code: int | None = None
     profile: str = "balanced"
+    vsc_pit_loss_factor: float | None = None
 
     def __post_init__(self) -> None:
         for value in (self.pit_loss_seconds, self.fresh_tyre_gain_seconds_per_lap,
                       self.wear_cost_seconds_per_percent, self.uncertainty_seconds_per_lap,
-                      self.safety_car_pit_loss_factor, self.traffic_loss_seconds):
+                      self.safety_car_pit_loss_factor, self.vsc_pit_loss_factor,
+                      self.traffic_loss_seconds):
             if value is not None and (not math.isfinite(value) or value < 0):
                 raise ValueError("strategy assumptions must be finite and non-negative")
         if self.next_compound_code is not None and not 0 <= self.next_compound_code <= 255:
             raise ValueError("next compound code must fit in a byte")
         if self.safety_car_pit_loss_factor is not None and self.safety_car_pit_loss_factor > 1:
             raise ValueError("safety car pit-loss factor must be between zero and one")
+        if self.vsc_pit_loss_factor is not None and self.vsc_pit_loss_factor > 1:
+            raise ValueError("VSC pit-loss factor must be between zero and one")
         if self.second_compound_code is not None and not 0 <= self.second_compound_code <= 255:
             raise ValueError("second compound code must fit in a byte")
         if self.profile not in ("conservative", "balanced", "aggressive"):
@@ -116,8 +120,11 @@ def compare_pit_scenarios(
                               None, None, None, (), ())
     if session.safety_car not in (0, 1, 2):
         return StrategyAdvice("unavailable: unsupported safety-car state", None, None, None, (), ())
-    if session.safety_car != 0 and assumptions.safety_car_pit_loss_factor is None:
-        return StrategyAdvice("unavailable: safety-car pit loss has not been calibrated",
+    neutralized_factor = (assumptions.safety_car_pit_loss_factor if session.safety_car == 1 else
+                          assumptions.vsc_pit_loss_factor if session.safety_car == 2 else 1.0)
+    if neutralized_factor is None:
+        kind = "safety-car" if session.safety_car == 1 else "VSC"
+        return StrategyAdvice(f"unavailable: {kind} pit loss has not been calibrated",
                               None, None, None, (), ())
     if any(sample.weather >= 3 and sample.offset_minutes <= 30
            for sample in session.forecasts if sample.session_type in (10, 11, 12)) and session.weather < 3:
@@ -129,8 +136,7 @@ def compare_pit_scenarios(
     wear = max(damage.tyre_wear_percent)
     rate = max(wear_rate)
     pit_loss = assumptions.pit_loss_seconds or 0.0
-    if session.safety_car != 0:
-        pit_loss *= assumptions.safety_car_pit_loss_factor or 0.0
+    pit_loss *= neutralized_factor
     gain = assumptions.fresh_tyre_gain_seconds_per_lap or 0.0
     wear_cost = assumptions.wear_cost_seconds_per_percent or 0.0
     traffic_loss = assumptions.traffic_loss_seconds or 0.0

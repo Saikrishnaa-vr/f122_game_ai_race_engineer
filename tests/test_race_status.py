@@ -70,3 +70,16 @@ def test_game_result_status_immediate_and_pit_safety_reset_stationary_clock() ->
     assert len(clear["track_map"]["markers"]) == 2
     reset = published(dashboard, facts(5, reset=1))
     assert not reset["facts"]["grid"][1].get("out_of_race")
+
+
+def test_missing_interval_and_restart_do_not_infer_stationary_dnf() -> None:
+    dashboard = DashboardState()
+    for lap, phase, generation in ((1, "GREEN", 1), (3, "STALE", 2),
+                                   (4, "GREEN", 3), (5, "GREEN", 3)):
+        data = facts(lap)
+        data["race_phase"] = {"status": phase, "generation": generation}
+        current = published(dashboard, data)
+        assert not current["facts"]["grid"][1].get("out_of_race")
+    data = facts(6)
+    data["race_phase"] = {"status": "GREEN", "generation": 3}
+    assert published(dashboard, data)["facts"]["grid"][1]["race_status"] == "DNF"

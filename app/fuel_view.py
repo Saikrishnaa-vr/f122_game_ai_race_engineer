@@ -7,14 +7,16 @@ from dataclasses import dataclass, field
 
 @dataclass(slots=True)
 class FuelView:
-    identity: tuple[int | None, int | None, int] | None = None
+    identity: tuple[int | None, int | None, int, int] | None = None
     lap_start: tuple[int, float, int, int] | None = None
     history: list[dict] = field(default_factory=list)
     previous_brake: tuple[int, float, float] | None = None
     braking_zones: list[dict] = field(default_factory=list)
 
     def update(self, facts: dict) -> dict:
-        identity = (facts.get("session_uid"), facts.get("player_index"), facts.get("state_resets", 0))
+        phase = facts.get("race_phase", {})
+        identity = (facts.get("session_uid"), facts.get("player_index"),
+                    facts.get("state_resets", 0), phase.get("generation", 0))
         if identity != self.identity:
             self.identity = identity
             self.lap_start = None
@@ -28,6 +30,9 @@ class FuelView:
         result = {"history": self.history.copy(), "status": "unavailable",
                   "message": "Need comparable lap-start fuel readings before a finish estimate."}
         if not (lap_field and status_field and session_field):
+            return result
+        if phase.get("status", "GREEN") != "GREEN":
+            result.update(status="hold", message="Reassess fuel after fresh green-flag laps.")
             return result
         lap, car, session = lap_field["value"], status_field["value"], session_field["value"]
         length = session.get("track_length_m", 0)

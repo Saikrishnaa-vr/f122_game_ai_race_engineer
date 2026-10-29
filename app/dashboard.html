@@ -62,8 +62,8 @@ header>div{display:flex;align-items:baseline;gap:11px;min-width:0}#circuitName{f
 @media(max-width:700px){.grid{grid-template-columns:1fr}.grid>section{grid-column:1!important}header>div{flex-wrap:wrap}#circuitName:before{display:none}}
 @media(prefers-reduced-motion:reduce){.tyre-ring,.fuel-fill,.fuel-bar{transition:none!important}.fuel-fill{animation:none!important}}
 </style>
-<header><div><span class="eyebrow">F1 22 · Pit wall</span><h1>Race engineer</h1></div><nav><a id="savedRaces" class="hidden" href="/">Saved races</a><a href="/practice">Practice &amp; presets</a> <span id="mode" class="badge">LIVE</span> <span id="connection" class="badge">Waiting for companion</span> <span id="voice" class="muted">Voice off</span></nav></header>
-<main><section id="replayPanel" class="replay hidden" aria-label="Recorded race replay"><h2>Recorded Grand Prix replay</h2><div class="replay-controls"><span id="replayDetails"></span><button type="button" id="replayPlay">Play</button><label for="replayLap">Jump to lap</label><select id="replayLap"></select><label for="replaySpeed">Speed</label><select id="replaySpeed"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select><input id="replaySeek" type="range" min="0" max="0" value="0" aria-label="Replay position"><span id="replayTime" class="muted">0:00 / 0:00</span></div><small id="replayNote">Recorded race; strategy is a historical estimate.</small></section><div id="raceAlerts" class="race-alerts hidden" role="status" aria-live="polite"><div id="safetyBanner" class="event-board safety hidden"><strong id="safetyTitle"></strong><span id="safetyDetail"></span></div><div id="pitBanner" class="event-board pit hidden"><strong id="pitTitle"></strong><span id="pitDetail"></span></div></div>
+<header><div><span class="eyebrow">F1 22 · Pit wall</span><h1>Race engineer</h1></div><nav><a id="savedRaces" class="hidden" href="/">Saved races</a><a href="/practice">Practice &amp; presets</a> <span id="mode" class="badge">LIVE</span> <span id="raceStatus" class="badge bad" title="Waiting for a fresh F1 22 Session packet">UNKNOWN</span> <span id="connection" class="badge">Waiting for companion</span> <span id="voice" class="muted">Voice off</span></nav></header>
+<main><section id="replayPanel" class="replay hidden" aria-label="Recorded race replay"><h2>Recorded race replay</h2><div class="replay-controls"><span id="replayDetails"></span><button type="button" id="replayPlay">Play</button><label for="replayLap">Jump to lap</label><select id="replayLap"></select><label for="replaySpeed">Speed</label><select id="replaySpeed"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select><input id="replaySeek" type="range" min="0" max="0" value="0" aria-label="Replay position"><span id="replayTime" class="muted">0:00 / 0:00</span></div><small id="replayNote">Recorded race; strategy is a historical estimate.</small></section><div id="raceAlerts" class="race-alerts hidden" role="status" aria-live="polite"><div id="safetyBanner" class="event-board safety hidden"><strong id="safetyTitle"></strong><span id="safetyDetail"></span></div><div id="gapBanner" class="event-board safety hidden"><strong id="gapTitle">TELEMETRY GAP</strong><span id="gapDetail"></span></div><div id="pitBanner" class="event-board pit hidden"><strong id="pitTitle"></strong><span id="pitDetail"></span></div></div>
 <div class="grid">
 <section class="race-card"><h2>Race</h2><div id="race" class="value">Unavailable</div><small id="session"></small></section>
 <section class="tyre-card"><h2>Tyre wear <span id="tyres" class="card-status">Waiting</span></h2><div class="tyre-grid" aria-label="Four tyre wear percentages"><div class="tyre-item"><span class="tyre-ring" id="tyreRing2"><strong id="tyreValue2">--</strong></span><span>FL</span></div><div class="tyre-item"><span class="tyre-ring" id="tyreRing3"><strong id="tyreValue3">--</strong></span><span>FR</span></div><div class="tyre-item"><span class="tyre-ring" id="tyreRing0"><strong id="tyreValue0">--</strong></span><span>RL</span></div><div class="tyre-item"><span class="tyre-ring" id="tyreRing1"><strong id="tyreValue1">--</strong></span><span>RR</span></div></div><small id="tyreDetail"></small></section>
@@ -256,6 +256,14 @@ function drawFuel(status,plan,view){
 }
 function show(data){
  const f=data.facts||{}, v=f.fields||{}, e=f.estimates||{};
+ const phase=f.race_phase||{},raceStatus=phase.status||'UNKNOWN';
+ el('raceStatus').textContent=raceStatus;
+ el('raceStatus').className=['GREEN','SC','VSC'].includes(raceStatus)?'badge':'badge bad';
+ el('raceStatus').title=raceStatus==='STALE'?'No recent valid race telemetry':raceStatus==='UNKNOWN'?'Fresh race-control status is unavailable':`F1 22 Session packet confirms ${raceStatus}`;
+ const lastGap=[...(phase.events||[])].reverse().find(event=>event.kind==='unobserved_interval');
+ const showGap=raceStatus==='STALE'||(lastGap&&f.observed_at_monotonic-lastGap.observed_at<10);
+ el('gapBanner').classList.toggle('hidden',!showGap);
+ el('gapDetail').textContent=raceStatus==='STALE'?`No race packet for ${phase.last_packet_age_s?.toFixed(1)??'?'} s; displayed telemetry is withheld.`:(lastGap?`Unobserved interval: ${lastGap.arrival_gap_s.toFixed(1)} s without packets, ${lastGap.game_time_gap_s.toFixed(1)} s game-time jump. Intermediate car values are unknown.`:'');
  showReplay(data.replay);
  el('connection').textContent=data.replay?'Recorded race':`Telemetry ${data.connection||'waiting'}`;
  el('connection').className=data.replay||data.connection==='receiving'?'badge':'badge bad';
@@ -278,12 +286,12 @@ function show(data){
   el('pitBanner').classList.toggle('urgent',pitAlert?.level==='urgent');
   el('pitTitle').textContent=pitAlert?`⚠ ${pitAlert.title}`:'';
   el('pitDetail').textContent=pitAlert?.detail||'';
-  el('raceAlerts').classList.toggle('hidden',!safetyAlert&&!pitAlert);
+  el('raceAlerts').classList.toggle('hidden',!safetyAlert&&!pitAlert&&!showGap);
  const rejoin=e.rejoin||{};el('rejoinStatus').textContent=rejoin.status==='estimate'?`Indicative position after a ${rejoin.pit_loss_seconds.toFixed(1)} s stop`:(rejoin.reason||'Waiting for race data');
  const formatRejoin=item=>item?`P${item.position} (P${item.range[0]}–P${item.range[1]})`:'—';
  el('boxNow').textContent=formatRejoin(rejoin.box_now);el('boxNext').textContent=formatRejoin(rejoin.box_next_lap);
  el('rejoinDetail').textContent=rejoin.status==='estimate'?`${rejoin.box_now.rivals_modelled} rivals modelled · ${rejoin.caveat}`:'Supply measured pit loss when available. No rival pit response is known.';
- const ahead=(f.grid||[]).find(row=>!row.out_of_race&&row.position===lap?.position-1);
+ const ahead=raceStatus==='GREEN'?(f.grid||[]).find(row=>!row.out_of_race&&row.position===lap?.position-1):null;
  el('chase').textContent=ahead?.pace_to_pass_seconds_per_lap!=null?`${ahead.pace_to_pass_seconds_per_lap.toFixed(2)} s/lap faster`:lap?.position===1?'You are leading':'Pace target unavailable';
  el('chaseDetail').textContent=ahead?.pace_to_pass_seconds_per_lap!=null?`To reach P${ahead.position} ${ahead.name} before the finish, assuming the gap and pace remain stable. Gap ${ahead.gap_seconds.toFixed(1)} s (${ahead.gap_source}).`:'Requires a valid gap and laps remaining.';
  const st=f.strategy||{};el('strategy').textContent=st.recommendation||'Unavailable';

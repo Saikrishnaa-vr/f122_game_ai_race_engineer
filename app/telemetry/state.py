@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from ..gaps import CheckpointGaps
+from ..race_timeline import RaceTimeline
 
 from .payloads import CarDamage, CarStatus, CarTelemetry, Event, Lap, Payload, Session, SessionHistory, decode_payload
 from .protocol import PacketHeader
+from .session_types import DRIVING_SESSION_TYPES
 
 
 FRESH_SECONDS = {0: 2.0, 1: 4.0, 2: 2.0, 3: 10.0, 4: 15.0, 5: 15.0, 6: 2.0, 7: 2.0, 10: 4.0, 11: 10.0}
@@ -32,10 +34,16 @@ class RaceState:
     rewind_candidate: tuple[float, float] | None = None
     histories: dict[int, Observation] = field(default_factory=dict)
     gaps: CheckpointGaps = field(default_factory=CheckpointGaps)
+    timeline: RaceTimeline = field(default_factory=RaceTimeline)
 
     def apply(self, data: bytes, header: PacketHeader, now: float) -> None:
         # Decode before changing state so malformed input cannot clear it.
         value = decode_payload(data, header)
+        if (self.session_uid is not None and header.session_uid != self.session_uid
+                and not (isinstance(value, Session) and header.session_uid != 0
+                         and value.session_type in DRIVING_SESSION_TYPES)):
+            # A stray lobby/menu datagram is not evidence that the race ended.
+            return
         if self.session_uid != header.session_uid or self.player_index != header.player_car_index:
             if self.session_uid is not None:
                 self.resets += 1
@@ -46,6 +54,7 @@ class RaceState:
             self.player_index = header.player_car_index
             self.latest_session_time = None
             self.rewind_candidate = None
+            self.timeline.reset()
         if isinstance(value, Event) and value.code == "FLBK":
             self.observations.clear()
             self.histories.clear()
@@ -53,6 +62,7 @@ class RaceState:
             self.resets += 1
             self.latest_session_time = None
             self.rewind_candidate = None
+            self.timeline.flashback(header, now, "FLBK")
         elif (self.latest_session_time is not None
               and header.session_time < self.latest_session_time - REWIND_SECONDS):
             candidate = self.rewind_candidate
@@ -69,11 +79,16 @@ class RaceState:
             self.resets += 1
             self.latest_session_time = None
             self.rewind_candidate = None
+            self.timeline.flashback(header, now, "confirmed_rewind")
         else:
             self.rewind_candidate = None
         if self.latest_session_time is None or header.session_time > self.latest_session_time:
             self.latest_session_time = header.session_time
         if value is None:
+            previous_generation = self.timeline.generation
+            self.timeline.observe(value, header, now)
+            if self.timeline.generation != previous_generation:
+                self.gaps.clear()
             return
         if isinstance(value, SessionHistory):
             previous_history = self.histories.get(value.car_index)
@@ -84,6 +99,10 @@ class RaceState:
                     return
             self.histories[value.car_index] = Observation(value, header, now)
             if value.car_index != self.player_index:
+                previous_generation = self.timeline.generation
+                self.timeline.observe(value, header, now)
+                if self.timeline.generation != previous_generation:
+                    self.gaps.clear()
                 return
         previous = self.observations.get(header.packet_id)
         if previous is not None:
@@ -92,6 +111,10 @@ class RaceState:
                 self.reordered += 1
                 return
         self.observations[header.packet_id] = Observation(value, header, now)
+        previous_generation = self.timeline.generation
+        self.timeline.observe(value, header, now)
+        if self.timeline.generation != previous_generation:
+            self.gaps.clear()
         if isinstance(value, Lap):
             session_obs = self.get_fresh(1, now)
             if session_obs is not None and isinstance(session_obs.value, Session):

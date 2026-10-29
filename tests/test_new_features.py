@@ -201,8 +201,14 @@ def test_pit_rejoin_projection_requires_measured_loss_and_discloses_range() -> N
     safety = Session(0, 25, 20, 10, 5000, 10, 1, 0, 2, ())
     assert project_rejoin(grid, lap, safety, StrategyAssumptions(pit_loss_seconds=22))["status"] == "unavailable"
     reduced = project_rejoin(grid, lap, safety,
-                             StrategyAssumptions(pit_loss_seconds=22, safety_car_pit_loss_factor=0.5))
+                             StrategyAssumptions(pit_loss_seconds=22, vsc_pit_loss_factor=0.5))
     assert reduced["status"] == "estimate" and reduced["box_now"]["position"] == 3
+    assert reduced["box_next_lap"] is None  # SC/VSC lap pace is not comparable.
+    assert project_rejoin(grid, lap, safety, StrategyAssumptions(
+        pit_loss_seconds=22, safety_car_pit_loss_factor=0.5))["status"] == "unavailable"
+    full_sc = Session(0, 25, 20, 10, 5000, 10, 1, 0, 1, ())
+    assert project_rejoin(grid, lap, full_sc, StrategyAssumptions(
+        pit_loss_seconds=22, vsc_pit_loss_factor=0.5))["status"] == "unavailable"
 
 
 def test_shared_checkpoint_gap_uses_crossing_times_and_expires() -> None:
