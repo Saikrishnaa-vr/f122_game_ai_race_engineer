@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Saved races · F1 22 Race Engineer</title>
+<style>
+:root{color-scheme:dark;font-family:Inter,Segoe UI,system-ui,sans-serif;background:#0a101a;color:#edf4fb}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 80% 0,#163446,#0a101a 44%);min-height:100vh}
+header{padding:30px max(24px,calc((100vw - 1120px)/2));border-bottom:1px solid #284056;background:#111d2a}
+.eyebrow{text-transform:uppercase;letter-spacing:.15em;color:#83dcc7;font-size:.72rem;font-weight:700}h1{font-size:2rem;margin:5px 0}header p{margin:0;color:#b2c4d0}
+main{max-width:1168px;margin:auto;padding:28px 24px}h2{font-size:1rem;text-transform:uppercase;letter-spacing:.1em;color:#9bb8c9;margin:0 0 18px}
+.intro{color:#b2c4d0;line-height:1.5;margin:0 0 22px}.intro code{background:#1a2d3b;padding:2px 5px;border-radius:4px}
+#status{min-height:24px;color:#a5e5d3;margin:0 0 15px}#status.error{color:#ffad9d}
+.list{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:14px}
+article{border:1px solid #2c4759;border-radius:13px;padding:19px;background:#152332;box-shadow:0 14px 32px #0003;display:flex;flex-direction:column;gap:10px}
+article h3{font-size:1.2rem;margin:0;line-height:1.3}.meta{display:flex;gap:8px;flex-wrap:wrap;color:#b1c5d2;font-size:.83rem}.chip{border:1px solid #40606e;border-radius:100px;padding:3px 9px;color:#9be5d1;font-size:.73rem;text-transform:uppercase;font-weight:700;letter-spacing:.05em}
+.chip.partial{color:#f1c685;border-color:#765e43}.file{color:#849cab;font-size:.7rem;overflow-wrap:anywhere;margin-top:auto}
+button{align-self:flex-start;border:0;border-radius:8px;padding:9px 16px;background:#29866d;color:#fff;font:inherit;font-weight:700;cursor:pointer}button:hover{background:#32a383}button:disabled{opacity:.5;cursor:wait}button:focus{outline:2px solid #9be5d1;outline-offset:3px}
+.empty{border:1px dashed #466072;border-radius:12px;padding:30px;color:#b2c4d0;line-height:1.5}
+</style>
+<header><span class="eyebrow">F1 22 · race engineer</span><h1>Saved races</h1><p>Choose a recording to inspect its timing, map and strategy at any lap.</p></header>
+<main><p class="intro">The live shortcut records each Grand Prix separately. A completed result is saved after the game's final classification arrives. Older <code>.f1cap</code> recordings in the <code>recordings</code> folder also appear here.</p><h2>Recording library</h2><p id="status" role="status">Loading recordings…</p><div id="list" class="list"></div></main>
+<script>
+const list=document.getElementById('list'),status=document.getElementById('status');
+const date=value=>{const d=new Date(value);return Number.isNaN(d.getTime())?'Date unavailable':new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(d)};
+function line(...parts){const node=document.createElement('div');node.className='meta';for(const part of parts){const span=document.createElement('span');span.textContent=part;node.append(span)}return node}
+async function openRace(item,button){
+ button.disabled=true;status.className='';status.textContent=`Building replay for ${item.track}… This may take a moment for a full race.`;
+ try{const response=await fetch('/api/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:item.name})});if(!response.ok)throw Error(await response.text());location.href='/race'}
+ catch(error){status.className='error';status.textContent=`Could not open recording: ${error.message}`;button.disabled=false}
+}
+async function load(){
+ try{const response=await fetch('/api/replays',{cache:'no-store'});if(!response.ok)throw Error(await response.text());const items=await response.json();status.textContent=`${items.length} recording${items.length===1?'':'s'} found`;
+  if(!items.length){list.className='empty';list.textContent='No recordings yet. Start Race Engineer.cmd will save a Grand Prix when the game sends telemetry, or place an existing .f1cap file in the recordings folder.';return}
+  for(const item of items){const card=document.createElement('article'),heading=document.createElement('h3'),chip=document.createElement('span'),filename=document.createElement('div'),button=document.createElement('button');heading.textContent=item.track;chip.className='chip'+(item.status==='completed'?'':' partial');chip.textContent=String(item.status).replaceAll('_',' ');filename.className='file';filename.textContent=item.name;button.type='button';button.textContent='Open replay';button.onclick=()=>openRace(item,button);
+   if(item.session_type!==10){button.disabled=true;button.textContent='No Grand Prix data'}
+   card.append(heading,line(date(item.started_at)),line(item.location||'Location unknown',item.player_name||'Driver unknown'),line(item.last_lap?`Lap ${item.last_lap}${item.total_laps?` / ${item.total_laps}`:''}`:'Lap unavailable',item.finish_position?`Last observed P${item.finish_position}`:'Position unavailable'),chip,filename,button);list.append(card)}
+ }catch(error){status.className='error';status.textContent=`Could not list recordings: ${error.message}`}
+}load();
+</script>
+</html>

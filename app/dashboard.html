@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>F1 22 Race Engineer</title>
+<style>
+:root{color-scheme:dark;font-family:Inter,Segoe UI,system-ui,sans-serif;background:#090e17;color:#edf4fb}
+*{box-sizing:border-box}body{margin:0;max-width:none;padding:0;background:radial-gradient(circle at 75% -10%,#173044 0,#090e17 43%)}
+header{display:flex;justify-content:space-between;align-items:center;gap:16px;padding:20px max(24px,calc((100vw - 1450px)/2));background:#111b2a;border-bottom:1px solid #27384b}
+h1{font-size:1.7rem;margin:2px 0 0}h2{font-size:1.03rem;margin:0 0 14px}.eyebrow{color:#8edfc7;text-transform:uppercase;letter-spacing:.13em;font-size:.72rem;font-weight:700}
+a{color:#8edfc7;text-decoration:none}a:hover{text-decoration:underline}a:focus,button:focus,input:focus{outline:2px solid #8edfc7;outline-offset:2px}
+main{max-width:1500px;margin:auto;padding:24px}.grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}
+section{background:#141f2f;border:1px solid #2b3d52;border-radius:14px;padding:20px;min-height:110px;box-shadow:0 12px 35px #0002}
+.value{font-size:1.55rem;font-weight:750;line-height:1.25}.muted{color:#a8b8c9}.good{color:#8edfc7}.bad{color:#f49e98}
+ul{padding-left:20px;line-height:1.5}small{color:#a8b8c9;line-height:1.5}#strategy{line-height:1.5}
+.wide{grid-column:1/-1}.half{grid-column:span 2}.map-layout{display:grid;grid-template-columns:minmax(0,2fr) minmax(250px,1fr);gap:20px;align-items:start}
+#trackMap{display:block;width:100%;height:auto;min-height:300px;background:radial-gradient(circle,#172b3c,#0b1420 75%);border:1px solid #30445b;border-radius:10px}
+#mapStatus{line-height:1.5}.table-wrap{overflow:auto;max-height:550px}
+table{width:100%;border-collapse:collapse;white-space:nowrap;font-size:.86rem}th,td{padding:10px 11px;text-align:left;border-bottom:1px solid #293a4e}
+th{position:sticky;top:0;background:#19283a;color:#a8b8c9;text-transform:uppercase;letter-spacing:.05em;font-size:.71rem}tr.player{background:#17403d;color:#b6f2dc}tr.selected{outline:2px solid #8edfc7;outline-offset:-2px}
+tbody tr{cursor:pointer}tbody tr:hover{background:#30465b}tbody tr:focus{outline:2px solid #f2c36e}
+#driverDetail{margin-top:15px;line-height:1.6}#driverDetail ul{margin:4px 0}
+.badge{display:inline-flex;align-items:center;padding:5px 10px;border-radius:99px;background:#233d48;color:#a9f1d9;font-size:.78rem;font-weight:700}.alert{background:#6d3427;color:#ffe2bd;border:1px solid #bd694e;padding:13px 18px;border-radius:10px;margin:0 0 16px;font-weight:700}.hidden{display:none}
+.metrics{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}.metrics>div{background:#0e1927;border:1px solid #30445b;border-radius:9px;padding:15px}.metrics strong{display:block;font-size:1.1rem;margin-top:5px}
+form#ask{display:flex;gap:10px;align-items:center;margin-top:18px;background:#141f2f;border:1px solid #2b3d52;border-radius:12px;padding:16px}input{background:#0c1623;color:#edf4fb;border:1px solid #435b75;border-radius:8px;padding:10px;font:inherit;flex:1}button{background:#2d896e;color:white;border:0;border-radius:8px;padding:10px 18px;font:inherit;cursor:pointer}button:hover{background:#36a483}
+.replay{margin-bottom:16px}.replay-controls{display:flex;align-items:center;flex-wrap:wrap;gap:10px}.replay-controls input[type=range]{min-width:220px;flex:1;accent-color:#8edfc7}.replay-controls select{background:#0c1623;color:#edf4fb;border:1px solid #435b75;border-radius:8px;padding:10px;font:inherit}.replay-controls button{min-width:76px}.replay small{display:block;margin-top:10px}
+@media(max-width:1100px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.map-layout{grid-template-columns:1fr}}@media(max-width:700px){header{flex-direction:column;align-items:start}main{padding:14px}.grid{grid-template-columns:1fr}.half{grid-column:1}form#ask{flex-wrap:wrap}form#ask input{min-width:100%}}
+/* Driving view: timing tower, circuit and decisions stay visible in one viewport. */
+html,body{height:100%;overflow:hidden}body{display:flex;flex-direction:column;background:#080e17}
+header{flex:0 0 54px;padding:7px 14px;background:#101a28}h1{font-size:1.07rem;margin:0}.eyebrow{font-size:.61rem}nav{font-size:.78rem;display:flex;align-items:center;gap:12px}nav .badge{padding:4px 8px}
+main{width:100%;max-width:none;height:calc(100dvh - 54px);margin:0;padding:8px;display:flex;flex-direction:column;gap:7px;min-height:0;overflow:hidden}
+.grid{flex:1;min-height:0;display:grid;grid-template-columns:minmax(305px,27fr) minmax(0,24fr) minmax(0,24fr) minmax(260px,25fr);grid-template-rows:72px 56px 108px 78px minmax(104px,1fr) 80px;gap:7px}
+.grid>section{min-height:0;min-width:0;padding:9px 11px;border-radius:9px;box-shadow:none;overflow:hidden}.grid h2{font-size:.7rem;text-transform:uppercase;letter-spacing:.1em;color:#a3bacd;margin:0 0 5px}.grid .value{font-size:1.17rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.grid>section:nth-child(1){grid-column:2;grid-row:1}.grid>section:nth-child(2){grid-column:3;grid-row:1}.grid>section:nth-child(3){grid-column:4;grid-row:1}.grid>section:nth-child(4){grid-column:4;grid-row:2}
+.grid>section:nth-child(5){grid-column:2/4;grid-row:2/7;display:flex;flex-direction:column}.grid>section:nth-child(6){grid-column:1;grid-row:1/7;display:flex;flex-direction:column}
+.grid>section:nth-child(7){grid-column:4;grid-row:3}.grid>section:nth-child(8){grid-column:4;grid-row:4}.grid>section:nth-child(9){grid-column:4;grid-row:5}.grid>section:nth-child(10){grid-column:4;grid-row:6}
+.map-layout{display:flex;flex:1;min-height:0;position:relative;flex-direction:column;gap:4px}.map-layout>div{flex:0 0 auto}.map-layout>div>small{display:none}#trackMap{width:100%;height:100%;min-height:0;flex:1;border:0;background:radial-gradient(circle at center,#1a2b3c,#0b1420 70%)}#mapStatus{margin:0;font-size:.72rem;line-height:1.2}.map-legend{display:flex;gap:10px;align-items:center;font-size:.69rem;color:#a8b8c9}.map-legend b{display:inline-block;width:9px;height:9px;border-radius:50%;margin-right:4px}.map-legend .you{background:#8de1c8}.map-legend .rival{background:#f2c36e}.map-legend .slow{background:#f48c70}.map-legend .yellow{background:#f5c452}
+.table-wrap{flex:1;max-height:none;min-height:0;overflow:hidden}table{font-size:.75rem;table-layout:fixed}th,td{padding:4px 4px;height:23px;overflow:hidden;text-overflow:ellipsis}th{font-size:.61rem;position:static}th:nth-child(3),td:nth-child(3),th:nth-child(6),td:nth-child(6),th:nth-child(7),td:nth-child(7),th:nth-child(8),td:nth-child(8),th:nth-child(10),td:nth-child(10){display:none}th:nth-child(1){width:13%}th:nth-child(2){width:34%}th:nth-child(4){width:18%}th:nth-child(5){width:17%}th:nth-child(9){width:18%}#gridStatus{font-size:.67rem;margin:0 0 5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#driverDetail{flex:0 0 auto;max-height:78px;margin:5px 0 0;overflow:hidden;font-size:.68rem;line-height:1.25}#driverDetail ul{display:flex;gap:8px;padding:0;list-style:none;white-space:nowrap;overflow:hidden}#driverDetail li:nth-child(n+3){display:none}#driverDetail small{display:none}.grid>section:nth-child(6)>small{display:none}
+.metrics{gap:5px}.metrics>div{padding:5px}.metrics strong{font-size:.9rem;margin:2px 0}.metrics span{font-size:.62rem}#rejoinStatus,#rejoinDetail,#chaseDetail,#strategyDetail,#forecast,#session,#tyreDetail,#energyDetail{font-size:.67rem;line-height:1.15;margin:0}#chase{font-size:.97rem}#strategy{font-size:.83rem;line-height:1.23}#messages{margin:0;padding-left:16px;font-size:.7rem;line-height:1.2}#messages li:nth-child(n+3){display:none}
+.replay{flex:0 0 auto;margin:0;padding:6px 9px;min-height:0}.replay h2,.replay small{display:none}.replay-controls{gap:7px;font-size:.72rem;flex-wrap:nowrap}.replay-controls input[type=range]{min-width:80px}.replay-controls button,.replay-controls select{padding:4px 7px;min-width:0}#replayDetails{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#a8b8c9}.alert{flex:0 0 auto;margin:0;padding:7px 10px;font-size:.83rem}
+form#ask{flex:0 0 auto;margin:0;padding:4px 7px;gap:7px;font-size:.72rem}form#ask input{padding:5px;font-size:.74rem}form#ask button{padding:5px 10px;font-size:.74rem}#answer{position:absolute;right:12px;bottom:45px;max-width:45vw;background:#193449;border-radius:7px;padding:7px;font-size:.75rem;z-index:4}#answer:empty{display:none}
+@media(max-height:800px) and (min-width:1101px){.grid{grid-template-rows:62px 48px 96px 70px minmax(80px,1fr) 70px}.grid>section{padding:6px 8px}.table-wrap th,.table-wrap td{height:20px;padding:2px 3px;font-size:.7rem}#driverDetail{max-height:46px}header{flex-basis:46px}main{height:calc(100dvh - 46px)}}
+@media(max-width:1100px){html,body{height:auto;overflow:auto}body{display:block}main{height:auto;overflow:visible}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:auto}.grid>section{grid-column:auto!important;grid-row:auto!important;min-height:90px}.grid>section:nth-child(5),.grid>section:nth-child(6){grid-column:1/-1!important;min-height:400px}.table-wrap{overflow:auto}.map-layout{min-height:350px}#trackMap{min-height:300px}form#ask{position:static}}
+@media(max-width:700px){.grid{grid-template-columns:1fr}.grid>section{grid-column:1!important}.replay-controls{flex-wrap:wrap}header{height:auto}main{height:auto}}
+.map-legend .you{border:2px solid #fff;background:#34576b}.map-legend .rival{background:#ef8309}.map-legend .slow{border:2px solid #f48c70;background:transparent}
+.table-wrap table{font-size:.71rem;font-variant-numeric:tabular-nums}.table-wrap th,.table-wrap td{padding-left:3px;padding-right:3px}.table-wrap th:nth-child(7),.table-wrap td:nth-child(7){display:table-cell}.table-wrap th:nth-child(3),.table-wrap td:nth-child(3),.table-wrap th:nth-child(6),.table-wrap td:nth-child(6),.table-wrap th:nth-child(8),.table-wrap td:nth-child(8),.table-wrap th:nth-child(10),.table-wrap td:nth-child(10){display:none}.table-wrap th:nth-child(1){width:9%}.table-wrap th:nth-child(2){width:27%}.table-wrap th:nth-child(4){width:17%}.table-wrap th:nth-child(5){width:17%}.table-wrap th:nth-child(7){width:17%}.table-wrap th:nth-child(9){width:13%}
+.grid tbody tr{border-left:3px solid var(--team-color,#718395)}.driver-number{display:inline-block;min-width:23px;margin-right:3px;padding:1px 3px;border-radius:3px;background:var(--team-color,#718395);color:var(--team-text,#fff);font-weight:800;text-align:center}.driver-code{font-weight:800;letter-spacing:.04em}.timing-purple{color:#c7a5ff;font-weight:800}.timing-green{color:#8de1b0;font-weight:800}.gap-estimate{color:#f2c36e}
+.grid{grid-template-columns:minmax(286px,24fr) minmax(0,27fr) minmax(0,27fr) minmax(240px,22fr)}
+.map-layout{overflow:hidden}.sector-strip{position:absolute;z-index:2;top:6px;left:6px;right:6px;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:5px;pointer-events:none}.sector-card{min-width:0;background:#0b1522e8;border:1px solid #38516c;border-radius:6px;padding:4px 6px;font-variant-numeric:tabular-nums}.sector-card span{display:block;color:#9eb9ce;font-size:.59rem;font-weight:750;letter-spacing:.06em}.sector-card strong{display:block;font-size:.83rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sector-card small{display:block;font-size:.61rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.sector-card.fastest strong{color:#c7a5ff}
+.race-alerts{display:flex;gap:7px;flex:0 0 auto}.event-board{flex:1;display:flex;align-items:center;gap:12px;min-width:0;padding:7px 12px;border:1px solid #b76d38;border-radius:8px;background:#49301b;color:#fff3d8;font-size:.77rem;line-height:1.2}.event-board strong{font-size:.88rem;white-space:nowrap}.event-board span{min-width:0;overflow:hidden;text-overflow:ellipsis}.event-board.safety{background:#72531b;border-color:#e1b740;color:#fff6ce}.event-board.pit{background:#41321d;border-color:#dba159}.event-board.urgent{background:#713322;border-color:#ed8662}.event-board.hidden,.race-alerts.hidden{display:none}
+@media(max-width:1100px){.grid{grid-template-columns:repeat(2,minmax(0,1fr))}.race-alerts{flex-wrap:wrap}.event-board{flex-basis:100%}}
+@media(max-width:700px){.grid{grid-template-columns:1fr}.sector-strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* Compact four-column cockpit: timing, map, car health, decisions. */
+.grid{grid-template-columns:minmax(260px,25fr) minmax(330px,36fr) minmax(220px,19fr) minmax(230px,20fr);grid-template-rows:52px minmax(120px,1.1fr) minmax(100px,.8fr) minmax(95px,.8fr) minmax(120px,1.1fr) 75px}
+.grid>section:nth-child(1){grid-column:3;grid-row:1}.grid>section:nth-child(2){grid-column:3;grid-row:2/4}.grid>section:nth-child(3){grid-column:3;grid-row:4/7}.grid>section:nth-child(4){grid-column:4;grid-row:1}
+.grid>section:nth-child(5){grid-column:2;grid-row:1/5}.grid>section:nth-child(6){grid-column:1;grid-row:1/7}.grid>section:nth-child(7){grid-column:2;grid-row:5/7}.grid>section:nth-child(8){grid-column:4;grid-row:2}.grid>section:nth-child(9){grid-column:4;grid-row:3/6}.grid>section:nth-child(10){grid-column:4;grid-row:6}
+header>div{display:flex;align-items:baseline;gap:11px;min-width:0}#circuitName{font-size:.9rem;font-weight:700;color:#eef5fb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:34vw}#circuitName:before{content:'|';color:#507085;margin-right:11px}#session{display:none}.race-card{display:flex;align-items:center;justify-content:space-between;gap:9px}.race-card h2{margin:0!important}.race-card .value{font-size:.98rem!important}.card-status{float:right;font-size:.63rem;color:#a8b8c9;letter-spacing:0;text-transform:none}
+.tyre-card,.fuel-card{display:flex;flex-direction:column}.tyre-grid{flex:1;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:repeat(2,minmax(0,1fr));gap:5px;min-height:0}.tyre-item{display:flex;align-items:center;justify-content:center;gap:5px;color:#bdcfde;font-size:.68rem;font-weight:800}.tyre-ring{--wear:0%;--wear-color:#8de1c8;position:relative;width:clamp(38px,4.2vw,68px);aspect-ratio:1;border-radius:50%;background:conic-gradient(var(--wear-color) var(--wear),#26394a 0);display:grid;place-items:center;transition:--wear .55s linear}.tyre-ring:before{content:'';position:absolute;inset:6px;border-radius:50%;background:#101b2a}.tyre-ring strong{position:relative;color:#f3f8fc;font-size:.68rem;font-variant-numeric:tabular-nums}@property --wear{syntax:'<percentage>';inherits:false;initial-value:0%}.tyre-card #tyreDetail{margin-top:3px}
+.fuel-head{display:flex;align-items:baseline;justify-content:space-between;gap:6px;font-variant-numeric:tabular-nums}.fuel-head strong{font-size:1.14rem}.fuel-head span{font-size:.7rem;color:#9de4ce}.fuel-tank{height:25px;margin:8px 0 5px;border:1px solid #456277;border-radius:7px;background:repeating-linear-gradient(90deg,#122131 0,#122131 18%,#233448 18.5%,#122131 19%);overflow:hidden}.fuel-fill{height:100%;width:0;background:linear-gradient(90deg,#228c70,#73e7bd,#228c70);background-size:200% 100%;transition:width .55s ease;animation:fuel-flow 2.5s linear infinite}@keyframes fuel-flow{to{background-position:200% 0}}.fuel-bars{height:65px;display:flex;align-items:end;gap:3px;padding:2px 0 11px;border-bottom:1px solid #33485a}.fuel-bar{flex:1;min-width:0;height:var(--bar-height,10%);background:#397a78;border-radius:3px 3px 0 0;transition:height .55s ease;position:relative}.fuel-bar:last-child{background:#72dcb8}.fuel-bar small{position:absolute;top:100%;left:0;right:0;text-align:center;font-size:.53rem;line-height:1.1}.fuel-finish{margin-top:8px;padding:6px;border-radius:6px;background:#173830;color:#a9f1d8;font-size:.78rem;font-weight:800}.fuel-finish.short{background:#5a3025;color:#ffe1c8}.fuel-advice{margin:8px 0 0;font-size:.72rem;line-height:1.3;color:#d4e3eb}.fuel-card #energyDetail{margin-top:5px;font-size:.68rem;line-height:1.25}
+.driver-photo{display:inline-grid;place-items:center;width:34px;height:20px;margin-right:3px;vertical-align:middle;border-radius:3px;background:#18283b;overflow:hidden}.driver-photo img{display:none;width:100%;height:100%;object-fit:cover}.driver-photo.has-photo img{display:block}.driver-photo:not(.has-photo):after{content:'◆';color:var(--team-color,#718395);font-size:15px}.driver-cell{white-space:nowrap}.driver-code{font-size:.7rem}.driver-number{min-width:19px;margin-right:2px}
+.grid tbody tr.out-of-race{opacity:.64}.grid tbody tr.out-of-race td:first-child,.grid tbody tr.out-of-race td:last-child{color:#f3b298;font-weight:800}
+@media(max-height:800px) and (min-width:1101px){.grid{grid-template-rows:42px minmax(105px,1.1fr) minmax(85px,.8fr) minmax(80px,.8fr) minmax(100px,1.1fr) 62px}.tyre-ring{width:clamp(35px,3.7vw,55px)}.fuel-bars{height:43px}.fuel-advice{font-size:.66rem}}
+@media(max-width:1100px){.grid{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:auto}.grid>section{grid-column:auto!important;grid-row:auto!important}.grid>section:nth-child(5),.grid>section:nth-child(6){grid-column:1/-1!important}.tyre-grid{min-height:180px}#circuitName{max-width:55vw}}
+@media(max-width:700px){.grid{grid-template-columns:1fr}.grid>section{grid-column:1!important}header>div{flex-wrap:wrap}#circuitName:before{display:none}}
+@media(prefers-reduced-motion:reduce){.tyre-ring,.fuel-fill,.fuel-bar{transition:none!important}.fuel-fill{animation:none!important}}
+</style>
+<header><div><span class="eyebrow">F1 22 · Pit wall</span><h1>Race engineer</h1></div><nav><a id="savedRaces" class="hidden" href="/">Saved races</a><a href="/practice">Practice &amp; presets</a> <span id="mode" class="badge">LIVE</span> <span id="connection" class="badge">Waiting for companion</span> <span id="voice" class="muted">Voice off</span></nav></header>
+<main><section id="replayPanel" class="replay hidden" aria-label="Recorded race replay"><h2>Recorded Grand Prix replay</h2><div class="replay-controls"><span id="replayDetails"></span><button type="button" id="replayPlay">Play</button><label for="replayLap">Jump to lap</label><select id="replayLap"></select><label for="replaySpeed">Speed</label><select id="replaySpeed"><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option><option value="8">8×</option></select><input id="replaySeek" type="range" min="0" max="0" value="0" aria-label="Replay position"><span id="replayTime" class="muted">0:00 / 0:00</span></div><small id="replayNote">Recorded race; strategy is a historical estimate.</small></section><div id="raceAlerts" class="race-alerts hidden" role="status" aria-live="polite"><div id="safetyBanner" class="event-board safety hidden"><strong id="safetyTitle"></strong><span id="safetyDetail"></span></div><div id="pitBanner" class="event-board pit hidden"><strong id="pitTitle"></strong><span id="pitDetail"></span></div></div>
+<div class="grid">
+<section class="race-card"><h2>Race</h2><div id="race" class="value">Unavailable</div><small id="session"></small></section>
+<section class="tyre-card"><h2>Tyre wear <span id="tyres" class="card-status">Waiting</span></h2><div class="tyre-grid" aria-label="Four tyre wear percentages"><div class="tyre-item"><span class="tyre-ring" id="tyreRing2"><strong id="tyreValue2">--</strong></span><span>FL</span></div><div class="tyre-item"><span class="tyre-ring" id="tyreRing3"><strong id="tyreValue3">--</strong></span><span>FR</span></div><div class="tyre-item"><span class="tyre-ring" id="tyreRing0"><strong id="tyreValue0">--</strong></span><span>RL</span></div><div class="tyre-item"><span class="tyre-ring" id="tyreRing1"><strong id="tyreValue1">--</strong></span><span>RR</span></div></div><small id="tyreDetail"></small></section>
+<section class="fuel-card"><h2>Fuel to finish</h2><div class="fuel-head"><strong id="energy">Unavailable</strong><span id="fuelFlow">-- kg/lap</span></div><div class="fuel-tank" role="img" aria-label="Fuel remaining as a fraction of tank capacity"><div id="fuelFill" class="fuel-fill"></div></div><div id="fuelBars" class="fuel-bars" aria-label="Recent fuel used per lap"></div><div id="fuelFinish" class="fuel-finish">Finish estimate unavailable</div><small id="energyDetail"></small><p id="fuelAdvice" class="fuel-advice">Waiting for comparable laps</p></section>
+<section><h2>Weather</h2><div id="weather" class="value">Unavailable</div><small id="forecast"></small></section>
+<section class="wide"><h2 id="mapHeading">Track map</h2><div class="map-layout"><svg id="trackMap" viewBox="0 0 800 500" role="img" aria-label="Circuit path, cars, sector splits, flags and lap invalidation locations"></svg><div id="sectorStrip" class="sector-strip" aria-label="Observed sector and lap timing"><div class="sector-card"><span>S1 · FASTEST</span><strong id="sectorBest1">—</strong><small id="sectorYou1">You —</small></div><div class="sector-card"><span>S2 · FASTEST</span><strong id="sectorBest2">—</strong><small id="sectorYou2">You —</small></div><div class="sector-card"><span>S3 · FASTEST</span><strong id="sectorBest3">—</strong><small id="sectorYou3">You —</small></div><div class="sector-card fastest"><span>FASTEST LAP</span><strong id="mapFastestLap">—</strong><small id="mapFastestDriver">Observed best</small></div></div><div><p id="mapStatus" class="muted">Waiting for session data</p><div class="map-legend"><span><b class="rival"></b>Team / race # / code</span><span><b class="you"></b>You</span><span><b class="slow"></b>Slow</span><span><b class="yellow"></b>Flag zone</span><span>◆ lap invalid</span></div><small>Sector split markers use observed sector changes when available; fallback thirds are approximate. Purple times are the fastest among available game timing/history, not an official timing feed. Car markers show race number and a three-letter driver code. A white ring marks your car; an orange ring marks a slow car. Amber diamonds mark where a lap became invalid; the game packet does not establish the exact track-limit boundary or reason. Bundled outlines are approximate until game coordinates are available.</small></div></div></section>
+<section class="wide"><h2>Live running order</h2><p id="gridStatus" class="muted">Waiting for shared lap timing</p><div class="table-wrap"><table><thead><tr><th>Pos</th><th>Driver</th><th>Lap</th><th title="Estimated gap relative to your car">Gap*</th><th>Last</th><th>vs your last</th><th>Best</th><th>vs your best</th><th>Pace*</th><th>Pit</th></tr></thead><tbody id="gridBody"></tbody></table></div><div id="driverDetail" aria-live="polite"></div><small>* A plain gap uses observed times when both cars cross the same 25 m checkpoint. An ≈ gap falls back to relative distance and your last valid lap. Both are estimates, not the game's official timing-loop gap. Pace to pass divides gap plus a 1 s passing margin by laps remaining. Select a driver for full name and sectors. Times use m:ss.mmm; purple is the fastest best lap and green marks a matching last lap.</small></section>
+<section class="half"><h2>Pit rejoin estimate</h2><p id="rejoinStatus" class="muted">Waiting for race data</p><div class="metrics"><div><span class="muted">Early stop · undercut attempt</span><strong id="boxNow">—</strong></div><div><span class="muted">Late stop · overcut attempt</span><strong id="boxNext">—</strong></div></div><small id="rejoinDetail"></small></section>
+<section class="half"><h2>Chase target</h2><div id="chase" class="value">Waiting for gap data</div><small id="chaseDetail"></small></section>
+<section><h2>Strategy</h2><div id="strategy">Unavailable</div><small id="strategyDetail"></small></section>
+<section><h2>Recent radio</h2><ul id="messages"></ul></section>
+</div>
+<form id="ask"><label for="question">Ask the engineer</label> <input id="question" maxlength="160" required aria-label="Question"> <button>Ask</button></form><p id="answer" role="status"></p>
+</main>
+<script>
+const el=id=>document.getElementById(id);
+const circuitName=document.createElement('span');circuitName.id='circuitName';circuitName.textContent='Circuit unavailable';document.querySelector('header>div').append(circuitName);
+// Wikimedia Commons 2022 car photographs; each thumbnail links to its attribution and licence page.
+const carPhotoFiles={
+ 0:'2022 British GP - Mercedes-AMG F1 W13 E Performance of George Russell (1).jpg',
+ 1:'2022 Emilia Romagna GP - Ferrari F1-75 of Charles Leclerc.jpg',
+ 2:'2022 Miami GP - Red Bull RB18 of Sergio Pérez.jpg',
+ 3:'2022 Williams FW44 Formula 1 Car. Driven by Alex Albon and Nicholas Latifi (52339096754).jpg',
+ 4:'AMR22 at the 2022 British Grand Prix.jpg',
+ 5:'2022 British GP - Alpine A522 of Fernando Alonso (4).jpg',
+ 6:'Pierre Gasly 2022 Emilia Romagna GP.jpg',
+ 7:'2022 British GP - Haas VF-22 of Kevin Magnussen (1).jpg',
+ 8:'Daniel Ricciardo 2022 Emilia Romagna.jpg',
+ 9:'2022 Emilia Romagna GP - Alfa Romeo C42 of Guanyu Zhou.jpg'
+};
+function carPhotoSource(teamId){const file=carPhotoFiles[teamId];return file?{page:`https://commons.wikimedia.org/wiki/File:${encodeURIComponent(file.replaceAll(' ','_'))}`,image:`https://commons.wikimedia.org/wiki/Special:FilePath/${encodeURIComponent(file)}?width=160`}:null}
+let selectedCarIndex=null;
+const svgNS='http://www.w3.org/2000/svg';
+function svgNode(tag,attributes){const node=document.createElementNS(svgNS,tag);for(const [key,value] of Object.entries(attributes))node.setAttribute(key,String(value));return node}
+let routeKey='',warningKey='',mapTransform=null,animationToken=0;
+const mapCars=new Map();
+const gridRows=new Map();
+function animateCars(token){
+ if(token!==animationToken)return;
+ let moving=false;const now=performance.now();
+ for(const car of mapCars.values()){
+  const fraction=Math.min(1,(now-car.started)/480),eased=fraction*(2-fraction);
+  car.x=car.fromX+(car.toX-car.fromX)*eased;car.y=car.fromY+(car.toY-car.fromY)*eased;
+  car.group.setAttribute('transform',`translate(${car.x.toFixed(1)} ${car.y.toFixed(1)})`);
+  if(fraction<1)moving=true;
+ }
+ if(moving)requestAnimationFrame(()=>animateCars(token));
+}
+function drawMap(map){
+ const svg=el('trackMap'),route=map?.route||[],cars=map?.markers||[],warnings=map?.display_invalidations||map?.lap_invalidations||[],flags=map?.flags||[],sectors=map?.sector_markers||[],lift=map?.fuel_lift;
+ const width=Math.max(200,svg.clientWidth||800),height=Math.max(180,svg.clientHeight||500);
+ el('mapHeading').textContent=map?.track_name?`Track map · ${map.track_name}`:'Track map';
+ const key=JSON.stringify([route,map?.orientation,Math.round(width),Math.round(height)]);
+ if(key!==routeKey){
+  routeKey=key;warningKey='';svg.setAttribute('viewBox',`0 0 ${width} ${height}`);svg.replaceChildren();mapCars.clear();
+  if(route.length){
+   const xs=route.map(point=>point[0]),zs=route.map(point=>point[1]);
+   const minX=Math.min(...xs),maxX=Math.max(...xs),minZ=Math.min(...zs),maxZ=Math.max(...zs);
+   const scale=Math.min((width-72)/Math.max(40,maxX-minX),(height-72)/Math.max(40,maxZ-minZ));
+   const left=(width-(maxX-minX)*scale)/2,top=36+(height-72-(maxZ-minZ)*scale)/2;
+   // F1 22 world Z increases toward screen bottom; geographic Y increases north.
+   mapTransform={x:value=>left+(value-minX)*scale,
+    y:value=>map?.orientation==='game-world'?top+(value-minZ)*scale:top+(maxZ-value)*scale};
+   if(route.length>1){const points=route.map(point=>`${mapTransform.x(point[0])},${mapTransform.y(point[1])}`).join(' ');
+    svg.append(svgNode('polyline',{points,fill:'none',stroke:'#1d6773','stroke-width':18,'stroke-linecap':'round','stroke-linejoin':'round'}));
+    svg.append(svgNode('polyline',{points,fill:'none',stroke:'#8de1d1','stroke-width':4,'stroke-linecap':'round','stroke-linejoin':'round'}));}
+    const startX=mapTransform.x(route[0][0]),startY=mapTransform.y(route[0][1]);
+    svg.append(svgNode('circle',{cx:startX,cy:startY,r:7,fill:'#f7f2c0'}));
+    const startLabel=svgNode('text',{x:startX+12,y:startY-10,fill:'#f7f2c0','font-size':12,'font-weight':800});startLabel.textContent=map?.approximate_positions?'S1 ≈':'S1 / START';svg.append(startLabel);
+  }else mapTransform=null;
+ }
+ if(!mapTransform){el('mapStatus').textContent='Waiting for fresh lap and motion data';return}
+ const warnKey=JSON.stringify([warnings,flags,sectors,lift]);
+ if(warnKey!==warningKey){warningKey=warnKey;for(const old of svg.querySelectorAll('.lap-warning,.map-flag,.sector-split,.fuel-lift'))old.remove();
+  if(route.length>1){const lengths=route.slice(1).map((point,i)=>Math.hypot(point[0]-route[i][0],point[1]-route[i][1]));const total=lengths.reduce((a,b)=>a+b,0);
+   function pointAt(fraction){let remaining=Math.max(0,Math.min(1,fraction))*total;for(let i=0;i<lengths.length;i++){if(remaining<=lengths[i]){const part=lengths[i]?remaining/lengths[i]:0;return [route[i][0]+(route[i+1][0]-route[i][0])*part,route[i][1]+(route[i+1][1]-route[i][1])*part]}remaining-=lengths[i]}return route.at(-1)}
+   for(const zone of flags){const samples=Math.max(3,Math.ceil((zone.end-zone.start)*100)),points=[];for(let i=0;i<=samples;i++){const at=pointAt(zone.start+(zone.end-zone.start)*i/samples);points.push(`${mapTransform.x(at[0])},${mapTransform.y(at[1])}`)}const color={2:'#5daafa',3:'#f4c451',4:'#f37870'}[zone.flag];if(!color)continue;const segment=svgNode('polyline',{points:points.join(' '),fill:'none',stroke:color,'stroke-width':11,'stroke-linecap':'round','stroke-linejoin':'round',opacity:.92,class:'map-flag'});const title=svgNode('title',{});title.textContent=`${{2:'Blue',3:'Yellow',4:'Red'}[zone.flag]} marshal-zone flag${map.approximate_positions?' (approximate outline alignment)':''}`;segment.append(title);svg.append(segment)}
+  }
+   for(const warning of warnings){const x=mapTransform.x(warning.x_m),y=mapTransform.y(warning.z_m);const symbol=svgNode('path',{d:`M ${x} ${y-8} L ${x+8} ${y} L ${x} ${y+8} L ${x-8} ${y} Z`,fill:'#f2b45f',stroke:'#492c18','stroke-width':2,class:'lap-warning'});const title=svgNode('title',{});title.textContent=`Lap ${warning.lap} invalidated near here; reason unconfirmed`;symbol.append(title);svg.append(symbol)}
+   for(const sector of sectors){const x=mapTransform.x(sector.x_m),y=mapTransform.y(sector.z_m);const group=svgNode('g',{class:'sector-split'});group.append(svgNode('circle',{cx:x,cy:y,r:14,fill:'#15263b',stroke:'#9fc9e6','stroke-width':2}));const label=svgNode('text',{x,y:y+4,'text-anchor':'middle',fill:'#e8f4ff','font-size':11,'font-weight':800});label.textContent=sector.label;group.append(label);const title=svgNode('title',{});title.textContent=`${sector.label} begins here${sector.approximate?' (approximate location)':' (near an observed sector transition)'}`;group.append(title);svg.append(group)}
+  if(lift){const x=mapTransform.x(lift.x_m),y=mapTransform.y(lift.z_m),group=svgNode('g',{class:'fuel-lift'});group.append(svgNode('circle',{cx:x,cy:y,r:17,fill:'#382a13',stroke:'#f3c45c','stroke-width':2}));const label=svgNode('text',{x,y:y+4,'text-anchor':'middle',fill:'#fff2ce','font-size':10,'font-weight':800});label.textContent='LIFT';group.append(label);const title=svgNode('title',{});title.textContent=`Approximate lift/coast candidate before an observed S${lift.sector} heavy braking point${lift.approximate?' (map position approximate)':''}`;group.append(title);svg.append(group)}
+  for(const marker of mapCars.values())svg.append(marker.group);
+ }
+ const visible=new Set(cars.map(car=>car.car_index));for(const [index,car] of mapCars)if(!visible.has(index)){car.group.remove();mapCars.delete(index)}
+ const now=performance.now();for(const car of cars){const cx=mapTransform.x(car.x_m),cy=mapTransform.y(car.z_m);let item=mapCars.get(car.car_index);
+  if(!item){const group=svgNode('g',{'data-car-index':car.car_index});group.append(svgNode('circle',{class:'marker-slow',r:19,fill:'none',stroke:'#f48c70','stroke-width':3}));group.append(svgNode('circle',{class:'marker-halo',r:16,fill:'none',stroke:'#fff','stroke-width':2.5}));group.append(svgNode('rect',{class:'marker-label',x:12,y:-10,width:39,height:20,rx:5,fill:'#0b1624','stroke-width':2}));group.append(svgNode('circle',{class:'marker-badge',r:12,stroke:'#0b1624','stroke-width':2}));group.append(svgNode('text',{class:'marker-number',x:0,y:4,'text-anchor':'middle','font-size':10,'font-weight':800}));group.append(svgNode('text',{class:'marker-code',x:31,y:4,'text-anchor':'middle',fill:'#fff','font-size':10,'font-weight':800}));group.append(svgNode('title',{}));svg.append(group);item={group,x:cx,y:cy,fromX:cx,fromY:cy,toX:cx,toY:cy,started:now};mapCars.set(car.car_index,item)}
+  const color=car.team_color||'#718395',number=car.race_number??'?',code=car.driver_code||'???';
+  item.group.querySelector('.marker-badge').setAttribute('fill',color);
+  item.group.querySelector('.marker-label').setAttribute('stroke',color);
+  item.group.querySelector('.marker-number').setAttribute('fill',car.team_text_color||'#fff');
+  item.group.querySelector('.marker-number').textContent=String(number);
+  item.group.querySelector('.marker-code').textContent=code;
+  item.group.querySelector('.marker-halo').setAttribute('visibility',car.is_player?'visible':'hidden');
+  item.group.querySelector('.marker-slow').setAttribute('visibility',car.slow?'visible':'hidden');
+  const label=`P${car.position} ${car.name} · ${car.team_name||'Team unknown'} · #${number}${car.slow?' · slow car observed':''}`;
+  item.group.querySelector('title').textContent=label;item.group.setAttribute('aria-label',label);
+  item.fromX=item.x;item.fromY=item.y;item.toX=cx;item.toY=cy;item.started=now;
+ }
+ animationToken++;requestAnimationFrame(()=>animateCars(animationToken));
+ const slow=cars.filter(car=>car.slow),yellow=flags.filter(zone=>zone.flag===3).length,red=flags.filter(zone=>zone.flag===4).length;
+ el('mapStatus').textContent=`${map.route_source||'No outline'}${map.approximate_positions?' · positions approximate':''} · ${cars.length} cars${yellow?` · ${yellow} yellow zone${yellow===1?'':'s'}`:''}${red?` · ${red} red zone${red===1?'':'s'}`:''}${slow.length?` · ${slow.map(car=>`P${car.position} slow`).join(', ')}`:''}${warnings.length?` · ${warnings.length} lap invalidation${warnings.length===1?'':'s'}`:''}`;
+}
+function lapTime(ms){if(!Number.isFinite(ms)||ms<=0)return '—';const minutes=Math.floor(ms/60000),seconds=Math.floor(ms%60000/1000),milli=Math.round(ms%1000);return `${minutes}:${String(seconds).padStart(2,'0')}.${String(milli).padStart(3,'0')}`}
+function sectorTime(ms){return Number.isFinite(ms)&&ms>0?(ms>=60000?lapTime(ms):(ms/1000).toFixed(3)):'—'}
+function drawSectorTiming(facts){
+ const rows=facts.grid||[],player=rows.find(row=>row.is_player),leaders=facts.sector_leaders||[];
+ const recent=player?.recent_laps?.at(-1);
+ const playerTimes=[player?.sector1_ms,player?.sector2_ms,recent?.sector3_ms];
+ for(let index=0;index<3;index++){
+  const leader=leaders[index],number=index+1;
+  el(`sectorBest${number}`).textContent=leader?`${sectorTime(leader.ms)} ${leader.driver_code||'???'}`:'—';
+  el(`sectorYou${number}`).textContent=`You ${sectorTime(playerTimes[index])}${index===2?' · last lap':''}`;
+  el(`sectorBest${number}`).parentElement.classList.toggle('fastest',!!leader);
+ }
+ const fastest=rows.filter(row=>row.best_lap_ms!=null).reduce((best,row)=>!best||row.best_lap_ms<best.best_lap_ms?row:best,null);
+ el('mapFastestLap').textContent=fastest?lapTime(fastest.best_lap_ms):'—';
+ el('mapFastestDriver').textContent=fastest?`#${fastest.race_number??'?'} ${fastest.driver_code||'???'} · game best`:'Game best unavailable';
+}
+function signedTime(ms){return Number.isFinite(ms)?`${ms>=0?'+':'−'}${(Math.abs(ms)/1000).toFixed(3)}`:'—'}
+function gapToPlayer(car){
+ if(car.is_player)return 'YOU';
+ if(car.gap_seconds==null)return '—';
+ const estimate=car.gap_source==='distance-scaled estimate';
+ return `${estimate?'≈':''}${car.gap_seconds>=0?'+':'−'}${Math.abs(car.gap_seconds).toFixed(estimate?1:2)}`;
+}
+function drawGrid(rows){
+ const body=el('gridBody');const visible=new Set(rows.map(row=>row.car_index));
+ for(const [index,tr] of gridRows)if(!visible.has(index)){tr.remove();gridRows.delete(index)}
+ const fastest=rows.filter(row=>row.best_lap_ms!=null).sort((a,b)=>a.best_lap_ms-b.best_lap_ms)[0];
+ const retired=rows.filter(row=>row.out_of_race).length;
+ el('gridStatus').textContent=rows.length?`${rows.length-retired} running${retired?` · ${retired} out`:''} · ${fastest?`Fastest ${fastest.driver_code||fastest.name} ${lapTime(fastest.best_lap_ms)}`:'best lap unavailable'} · gaps to you are estimates`:'Shared lap data unavailable or stale';
+ const selected=rows.find(row=>row.car_index===selectedCarIndex)||rows.find(row=>row.is_player)||rows[0];
+ selectedCarIndex=selected?.car_index??null;
+ for(const [index,car] of rows.entries()){
+  let tr=gridRows.get(car.car_index);if(!tr){tr=document.createElement('tr');tr.tabIndex=0;for(let i=0;i<10;i++){const td=document.createElement('td');if(i===1){td.className='driver-cell';const photo=document.createElement('a'),img=document.createElement('img'),number=document.createElement('span'),code=document.createElement('span');photo.className='driver-photo';photo.target='_blank';photo.rel='noopener noreferrer';photo.onclick=event=>event.stopPropagation();img.alt='';img.loading='lazy';img.referrerPolicy='no-referrer';img.onload=()=>photo.classList.add('has-photo');img.onerror=()=>photo.classList.remove('has-photo');photo.append(img);number.className='driver-number';code.className='driver-code';td.append(photo,number,code)}tr.append(td)}gridRows.set(car.car_index,tr)}
+  tr.classList.toggle('player',car.is_player);tr.classList.toggle('selected',car.car_index===selectedCarIndex);tr.classList.toggle('out-of-race',!!car.out_of_race);
+  tr.style.setProperty('--team-color',car.team_color||'#718395');tr.style.setProperty('--team-text',car.team_text_color||'#fff');
+  tr.setAttribute('aria-label',`View recent laps for ${car.race_status||`P${car.position}`} ${car.name}, number ${car.race_number??'unknown'}, ${car.team_name||'team unknown'}`);
+  tr.title=`${car.race_status||`P${car.position}`} ${car.name} · ${car.team_name||'Team unknown'} · #${car.race_number??'?'}${car.race_status_source?` · ${car.race_status_source}`:''}`;
+  tr.onclick=()=>{selectedCarIndex=car.car_index;drawGrid(rows)};
+  tr.onkeydown=event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();selectedCarIndex=car.car_index;drawGrid(rows)}};
+  const last=lapTime(car.last_lap_ms),delta=signedTime(car.delta_last_lap_ms),best=lapTime(car.best_lap_ms),bestDelta=signedTime(car.delta_best_lap_ms);
+  const gap=gapToPlayer(car),pace=car.pace_to_pass_seconds_per_lap!=null?`+${car.pace_to_pass_seconds_per_lap.toFixed(2)}/L`:'—';
+  const values=[car.race_status||`P${car.position}`,'',car.lap_number,car.out_of_race?'—':gap,last,delta,best,bestDelta,car.out_of_race?'—':pace,car.race_status||(car.pit_status?'PIT':'—')];
+  for(let i=0;i<values.length;i++){if(i===1)continue;const value=String(values[i]);if(tr.children[i].textContent!==value)tr.children[i].textContent=value}
+  const photo=tr.children[1].children[0],source=carPhotoSource(car.team_id);
+  if(source&&photo.dataset.teamId!==String(car.team_id)){photo.dataset.teamId=String(car.team_id);photo.classList.remove('has-photo');photo.href=source.page;photo.setAttribute('aria-label',`${car.team_name} car photo source and credit`);photo.querySelector('img').src=source.image}
+  if(!source&&photo.dataset.teamId){delete photo.dataset.teamId;photo.removeAttribute('href');photo.removeAttribute('aria-label');photo.classList.remove('has-photo');photo.querySelector('img').removeAttribute('src')}
+  tr.children[1].children[1].textContent=car.race_number??'?';tr.children[1].children[2].textContent=car.driver_code||'???';
+  tr.children[4].classList.toggle('timing-green',car.last_lap_ms!=null&&car.best_lap_ms!=null&&car.last_lap_ms===car.best_lap_ms);
+  tr.children[6].classList.toggle('timing-purple',fastest?.car_index===car.car_index);
+  tr.children[3].classList.toggle('gap-estimate',car.gap_source==='distance-scaled estimate'&&car.gap_seconds!=null);
+  tr.children[3].title=car.is_player?'Your car':car.gap_source||'Gap unavailable';
+  if(body.children[index]!==tr)body.insertBefore(tr,body.children[index]||null)
+ }
+ const detail=el('driverDetail');detail.replaceChildren();
+ if(!selected){detail.textContent='Recent lap history unavailable or stale';return}
+ const heading=document.createElement('strong');heading.textContent=`${selected.race_status||`P${selected.position}`} #${selected.race_number??'?'} ${selected.driver_code||'???'} · ${selected.name} · ${selected.team_name||'Team unknown'} · ${selected.recorded_laps??'—'} laps`;detail.append(heading);
+ if(!selected.recent_laps?.length){const empty=document.createElement('p');empty.textContent='Recent lap history unavailable or stale';detail.append(empty);return}
+ const list=document.createElement('ul');for(const lap of selected.recent_laps){const item=document.createElement('li');item.textContent=`L${lap.lap_number} ${lapTime(lap.lap_ms)} · S1 ${sectorTime(lap.sector1_ms)} / S2 ${sectorTime(lap.sector2_ms)} / S3 ${sectorTime(lap.sector3_ms)}`;list.append(item)}detail.append(list);
+ const caveat=document.createElement('small');caveat.textContent=`Session History ${selected.history_age_seconds?.toFixed(1)??'?'}s old; validity flags are not interpreted.`;detail.append(caveat);
+}
+function drawTyres(damage,status){
+ const wear=damage?.tyre_wear_percent;
+ for(let i=0;i<4;i++){
+  const value=wear?.[i],ring=el(`tyreRing${i}`);
+  ring.style.setProperty('--wear',Number.isFinite(value)?`${Math.max(0,Math.min(100,value))}%`:'0%');
+  ring.style.setProperty('--wear-color',value>=70?'#f19b75':value>=45?'#f0c56d':'#81dcb7');
+  el(`tyreValue${i}`).textContent=Number.isFinite(value)?`${Math.round(value)}%`:'--';
+ }
+ el('tyres').textContent=wear?`max ${Math.max(...wear).toFixed(0)}%`:'unavailable';
+ el('tyreDetail').textContent=status?`Compound code ${status.actual_compound} · age ${status.tyre_age_laps} laps`:'Wear order: front pair above, rear pair below';
+}
+let fuelHistoryKey='';
+function drawFuel(status,plan,view){
+ const tank=el('fuelFill'),finish=el('fuelFinish'),history=view?.history||[];
+ if(!status){el('energy').textContent='Unavailable';el('fuelFlow').textContent='-- kg/lap';tank.style.width='0%';finish.textContent='Finish estimate unavailable';finish.classList.remove('short');el('energyDetail').textContent='';el('fuelAdvice').textContent='Waiting for fuel data';}
+ else{
+  el('energy').textContent=`${status.fuel_kg.toFixed(2)} kg`;
+  el('fuelFlow').textContent=plan?`${plan.use_kg_per_lap.toFixed(2)} kg/lap`:'Use rate pending';
+  tank.style.width=`${Math.max(0,Math.min(100,100*status.fuel_kg/Math.max(status.fuel_capacity_kg,0.01)))}%`;
+  tank.parentElement.setAttribute('aria-label',`${status.fuel_kg.toFixed(2)} of ${status.fuel_capacity_kg.toFixed(2)} kilograms of fuel remain`);
+  finish.textContent=plan?`${plan.projected_finish_kg>=0?'+':''}${plan.projected_finish_kg.toFixed(2)} kg projected at finish · low confidence`:'Finish estimate needs comparable laps';
+  finish.classList.toggle('short',plan?.status==='short');
+  el('energyDetail').textContent=plan?.status==='short'?`Target ≤${plan.target_use_kg_per_lap.toFixed(2)} kg/lap · save ≈${plan.required_save_kg_per_lap.toFixed(2)} kg/lap · ERS ${(status.ers_joules/1e6).toFixed(2)} MJ`:`ERS ${(status.ers_joules/1e6).toFixed(2)} MJ · ${plan?.remaining_laps?.toFixed(1)??'--'} laps left`;
+  el('fuelAdvice').textContent=view?.message||'Recheck fuel use after another comparable lap.';
+ }
+ const key=JSON.stringify(history);
+ if(key!==fuelHistoryKey){fuelHistoryKey=key;const bars=el('fuelBars');bars.replaceChildren();if(!history.length){bars.textContent='Per-lap burn appears after comparable laps';return}const max=Math.max(2.5,...history.map(row=>row.used_kg));for(const row of history){const bar=document.createElement('span'),label=document.createElement('small');bar.className='fuel-bar';bar.style.setProperty('--bar-height',`${Math.max(10,row.used_kg/max*88)}%`);bar.title=`Lap ${row.lap_number}: ${row.used_kg.toFixed(2)} kg used`;label.textContent=`L${row.lap_number}`;bar.append(label);bars.append(bar)}}
+}
+function show(data){
+ const f=data.facts||{}, v=f.fields||{}, e=f.estimates||{};
+ showReplay(data.replay);
+ el('connection').textContent=data.replay?'Recorded race':`Telemetry ${data.connection||'waiting'}`;
+ el('connection').className=data.replay||data.connection==='receiving'?'badge':'badge bad';
+ el('voice').textContent=`Voice: ${data.voice_status||'off'}`;
+ const lap=v.lap?.value, ses=v.session?.value, status=v.car_status?.value, damage=v.damage?.value;
+ el('race').textContent=lap?`LAP ${lap.lap_number}${ses?.total_laps?` / ${ses.total_laps}`:''} · P${lap.position}`:'Unavailable or stale';
+ el('session').textContent=ses?`${data.track_map?.track_name||`Track ${ses.track_id}`} · ${ses.session_type===10?'Grand Prix':`Session ${ses.session_type}`}`:'';
+ el('tyres').textContent=damage?`${Math.max(...damage.tyre_wear_percent).toFixed(0)}% max wear`:'Unavailable or stale';
+ el('tyreDetail').textContent=damage?`RL / RR / FL / FR: ${damage.tyre_wear_percent.map(x=>x.toFixed(0)).join(' / ')}%`:'';
+ el('energy').textContent=status?`${status.fuel_kg.toFixed(2)} kg · ${(status.ers_joules/1e6).toFixed(2)} MJ`:'Unavailable or stale';
+ el('energyDetail').textContent=e.fuel_margin_laps?`Estimated fuel margin ${e.fuel_margin_laps.value.toFixed(2)} laps (low confidence)`:'';
+ el('weather').textContent=ses?`Weather code ${ses.weather} · SC ${ses.safety_car}`:'Unavailable or stale';
+ el('forecast').textContent=ses?.forecasts?.length?`Next forecast: code ${ses.forecasts[0].weather} in ${ses.forecasts[0].offset_minutes} min`:'';
+  const safetyAlert=f.safety_alert;
+  el('safetyBanner').classList.toggle('hidden',!safetyAlert);
+  el('safetyTitle').textContent=safetyAlert?`⚠ ${safetyAlert.title}`:'';
+  el('safetyDetail').textContent=safetyAlert?.detail||'';
+  const pitAlert=f.pit_alert;
+  el('pitBanner').classList.toggle('hidden',!pitAlert);
+  el('pitBanner').classList.toggle('urgent',pitAlert?.level==='urgent');
+  el('pitTitle').textContent=pitAlert?`⚠ ${pitAlert.title}`:'';
+  el('pitDetail').textContent=pitAlert?.detail||'';
+  el('raceAlerts').classList.toggle('hidden',!safetyAlert&&!pitAlert);
+ const rejoin=e.rejoin||{};el('rejoinStatus').textContent=rejoin.status==='estimate'?`Indicative position after a ${rejoin.pit_loss_seconds.toFixed(1)} s stop`:(rejoin.reason||'Waiting for race data');
+ const formatRejoin=item=>item?`P${item.position} (P${item.range[0]}–P${item.range[1]})`:'—';
+ el('boxNow').textContent=formatRejoin(rejoin.box_now);el('boxNext').textContent=formatRejoin(rejoin.box_next_lap);
+ el('rejoinDetail').textContent=rejoin.status==='estimate'?`${rejoin.box_now.rivals_modelled} rivals modelled · ${rejoin.caveat}`:'Supply measured pit loss when available. No rival pit response is known.';
+ const ahead=(f.grid||[]).find(row=>!row.out_of_race&&row.position===lap?.position-1);
+ el('chase').textContent=ahead?.pace_to_pass_seconds_per_lap!=null?`${ahead.pace_to_pass_seconds_per_lap.toFixed(2)} s/lap faster`:lap?.position===1?'You are leading':'Pace target unavailable';
+ el('chaseDetail').textContent=ahead?.pace_to_pass_seconds_per_lap!=null?`To reach P${ahead.position} ${ahead.name} before the finish, assuming the gap and pace remain stable. Gap ${ahead.gap_seconds.toFixed(1)} s (${ahead.gap_source}).`:'Requires a valid gap and laps remaining.';
+ const st=f.strategy||{};el('strategy').textContent=st.recommendation||'Unavailable';
+ const pit=st.scenarios?.find(x=>x.action===st.recommendation)?.pit_lap;
+ el('strategyDetail').textContent=[pit?`Suggested pit lap ${pit}`:'',st.pit_window_laps?`Modelled window ${st.pit_window_laps[0]}–${st.pit_window_laps[1]}`:'',st.alternative?`Alternative: ${st.alternative}`:'',st.uncertainty_seconds!=null?`Uncertainty at least ±${st.uncertainty_seconds.toFixed(1)} s`:''].filter(Boolean).join(' · ');
+ el('messages').replaceChildren(...(data.messages||[]).map(m=>{const li=document.createElement('li');li.textContent=m;return li}));
+  drawSectorTiming(f);drawMap(data.track_map);drawGrid(f.grid||[]);
+  drawTyres(damage,status);drawFuel(status,e.fuel_plan,e.fuel_view);
+  el('mapHeading').textContent='Track map';
+  el('circuitName').textContent=ses?(data.track_map?.track_name||`Track ${ses.track_id}`):'Circuit unavailable';
+  if(data.replay?.details){const d=data.replay.details;el('replayDetails').textContent=new Date(d.started_at).toLocaleDateString();el('replayDetails').title=`Saved race · ${d.player_name||'Driver'} · ${d.total_laps||'?'} laps`}
+}
+let replayLapsKey='';
+function replayClock(seconds){const whole=Math.floor(seconds||0);return `${Math.floor(whole/60)}:${String(whole%60).padStart(2,'0')}`}
+function showReplay(replay){
+ el('replayPanel').classList.toggle('hidden',!replay);
+ el('mode').textContent=replay?'REPLAY':'LIVE';
+ el('savedRaces').classList.toggle('hidden',!replay?.library_mode);
+ if(!replay)return;
+ if(replay.details){const d=replay.details;const label=`${d.track} · ${new Date(d.started_at).toLocaleDateString()}`;el('replayDetails').textContent=label;el('replayDetails').title=label;el('mode').title=label}
+ el('replayPlay').textContent=replay.playing?'Pause':'Play';
+ const seek=el('replaySeek');seek.max=String(Math.max(0,replay.total-1));
+ if(document.activeElement!==seek)seek.value=String(replay.index);
+ el('replayTime').textContent=`${replayClock(replay.elapsed)} / ${replayClock(replay.duration)} · Lap ${replay.lap}`;
+ el('replaySpeed').value=String(replay.speed);
+ const key=JSON.stringify(replay.laps),laps=el('replayLap');
+ if(key!==replayLapsKey){replayLapsKey=key;laps.replaceChildren(...Object.keys(replay.laps).map(lap=>{const option=document.createElement('option');option.value=lap;option.textContent=`Lap ${lap}`;return option}))}
+ laps.value=String(replay.lap);
+ el('replayNote').textContent=replay.pit_loss_seconds==null?'Recorded race · pit rejoin is unavailable without a measured pit loss.':`Recorded race · ${replay.pit_loss_seconds.toFixed(1)} s pit loss is a test-only assumption, not measured from this race. Strategy and rejoin are indicative.`;
+}
+async function replayControl(command){
+ try{const response=await fetch('/api/replay',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(command)});if(!response.ok)throw Error(await response.text());show(await response.json())}
+ catch(error){el('replayNote').textContent=`Replay control failed: ${error.message}`}
+}
+el('replayPlay').onclick=()=>replayControl({action:el('replayPlay').textContent==='Play'?'play':'pause'});
+el('replayLap').onchange=()=>replayControl({action:'lap',lap:Number(el('replayLap').value)});
+el('replaySpeed').onchange=()=>replayControl({action:'speed',speed:Number(el('replaySpeed').value)});
+el('replaySeek').onchange=()=>replayControl({action:'seek',index:Number(el('replaySeek').value)});
+let polling=false,pollBusy=false;
+async function pollState(){if(pollBusy)return;pollBusy=true;try{const response=await fetch('/api/state',{cache:'no-store'});if(!response.ok)throw Error('state unavailable');show(await response.json())}catch{el('connection').textContent='Dashboard unavailable';el('connection').className='badge bad';drawMap(null);drawGrid([])}finally{pollBusy=false}}
+function startPolling(){if(polling)return;polling=true;pollState();setInterval(pollState,500)}
+try{const ws=new WebSocket(`ws://${location.host}/ws`);ws.onmessage=ev=>show(JSON.parse(ev.data));ws.onclose=startPolling;ws.onerror=()=>ws.close()}catch{startPolling()}
+el('ask').onsubmit=async ev=>{ev.preventDefault();const question=el('question').value;try{const r=await fetch('/api/ask',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({question})});const v=await r.json();el('answer').textContent=v.answer||'Question unavailable';}catch{el('answer').textContent='Engineer unavailable'};};
+</script>
+</html>
