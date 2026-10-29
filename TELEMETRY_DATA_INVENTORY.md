@@ -9,7 +9,7 @@ F1 22 sends its **2022 UDP format** to `127.0.0.1:20777`. The receiver validates
 | Artifact | Location under this project | Contents |
 | --- | --- | --- |
 | Raw race capture | `recordings/*.f1cap` | Original UDP datagrams with elapsed monotonic time per packet. Replaying these runs current decoders and dashboard code against the old race. This is the richest source for new analysis. |
-| Recording metadata | `recordings/*.json`, when a sidecar has been saved | Track, local start date/time, player name, session type, scheduled/last lap, last observed position, duration, packet count, completion status. Older captures may have no sidecar; the replay library derives this metadata by scanning the capture. |
+| Recording metadata | `recordings/*.json`, when a sidecar has been saved | Track, local start date/time, player name, session type, scheduled/last lap, last observed position, duration, packet count, status, stop reason, and prior segment when a 2 GiB file boundary is crossed. `incomplete` means no `SEND` or classification was captured. Older captures may have no sidecar; the replay library derives metadata by scanning the capture. |
 | Structured history | `data/races.sqlite3` | Sampled player laps, game-reported sectors, selected event codes, issued advice, session details, and practice setup labels. It is much smaller than a raw capture. |
 | Diagnostic log | `logs/race-engineer.log` | Receiver status, packet counts, errors, snapshots, and engineer reports. Useful for debugging, not the canonical analysis dataset. |
 | Dashboard facts | `app/intelligence.py` via the local dashboard | Fresh decoded fields, full running order, map data, and estimates. These are generated in memory; the dashboard snapshot is not a separate historical database. |

@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from .logging_setup import LOGGER
 from .telemetry import capture
-from .telemetry.capture import CaptureWriter, capture_path, read_capture
+from .telemetry.capture import MAGIC, RECORD, CaptureWriter, capture_path, read_capture
 from .telemetry.payloads import Event, Lap, Participant, Session, decode_payload
 from .telemetry.protocol import PacketError, PacketHeader, decode_packet
 from .track_map import CATALOG
@@ -21,6 +21,8 @@ from .track_map import CATALOG
 
 CLASSIFICATION_GRACE_SECONDS = 5.0
 SESSION_END_GRACE_SECONDS = 60.0
+RESTART_REWIND_SECONDS = 30.0
+RACE_SESSION_TYPES = frozenset((10, 11, 12))
 
 
 def _started_at(path: Path) -> str:
@@ -48,6 +50,7 @@ class RecordingSummary:
         self.classification_seen = False
         self.session_ended = False
         self.packets = 0
+        self.continued_from: str | None = None
 
     def observe(self, elapsed: float, data: bytes, header: PacketHeader | None = None) -> None:
         try:
@@ -75,7 +78,8 @@ class RecordingSummary:
         if header.packet_id == 8:
             self.classification_seen = True
 
-    def as_dict(self, path: Path, status: str | None = None) -> dict:
+    def as_dict(self, path: Path, status: str | None = None,
+                stop_reason: str | None = None) -> dict:
         track = CATALOG.get(str(self.track_id), {})
         return {
             "name": self.name,
@@ -92,13 +96,16 @@ class RecordingSummary:
             "duration_seconds": round(self.duration_seconds, 1),
             "size_bytes": path.stat().st_size,
             "packets": self.packets,
-            "status": status or ("completed" if self.classification_seen else "ended" if self.session_ended else "stopped"),
+            "status": status or ("completed" if self.classification_seen else "ended" if self.session_ended else "incomplete"),
+            "stop_reason": stop_reason,
+            "continued_from": self.continued_from,
         }
 
 
-def save_summary(summary: RecordingSummary, status: str | None = None) -> dict:
+def save_summary(summary: RecordingSummary, status: str | None = None,
+                 stop_reason: str | None = None) -> dict:
     path = capture_path(summary.name)
-    data = summary.as_dict(path, status)
+    data = summary.as_dict(path, status, stop_reason)
     sidecar = path.with_suffix(".json")
     temporary: Path | None = None
     try:
@@ -138,7 +145,7 @@ def list_recordings() -> list[dict]:
     for path in capture.CAPTURE_DIRECTORY.glob("*.f1cap"):
         try:
             item = recording_info(path.name)
-            if item["session_type"] == 10 and item["packets"] > 0:
+            if item["session_type"] in RACE_SESSION_TYPES and item["packets"] > 0:
                 result.append(item)
         except (OSError, ValueError) as exc:
             LOGGER.warning("Skipping unreadable recording %s: %s", path.name, exc)
@@ -157,13 +164,85 @@ class AutoRaceRecorder:
         self.ended_at: float | None = None
         self.classified_at: float | None = None
         self.completed_uid: int | None = None
+        self.completed_game_time = 0.0
+        self.completed_had_end = False
+        self.last_packet_at: float | None = None
+        self.rejected_packets = 0
+        self.ignored_other_session = 0
+        self.session_packet: bytes | None = None
+        self.latest_game_time = 0.0
+
+    def reject(self, reason: str) -> None:
+        """Account for datagrams that failed protocol validation."""
+        self.rejected_packets += 1
+        if self.rejected_packets == 1 or self.rejected_packets % 100 == 0:
+            LOGGER.warning("recording event=packet_rejected reason=%s rejected=%d active_uid=%s",
+                           reason, self.rejected_packets, self.session_uid)
+
+    def diagnostics(self, now: float) -> None:
+        """Periodic bounded counters, including the last successful write."""
+        LOGGER.info("recording event=health active_uid=%s session_type=%s lap=%s "
+                    "accepted=%d rejected=%d ignored_other_session=%d bytes=%d "
+                    "last_write_monotonic=%s last_write_age_s=%s",
+                    self.session_uid, self.summary.session_type if self.summary else None,
+                    self.summary.last_lap if self.summary else None,
+                    self.summary.packets if self.summary else 0, self.rejected_packets,
+                    self.ignored_other_session, self.writer.size if self.writer else 0,
+                    round(self.last_packet_at, 3) if self.last_packet_at is not None else None,
+                    round(now - self.last_packet_at, 1) if self.last_packet_at is not None else None)
 
     def observe(self, now: float, data: bytes, header: PacketHeader, session: Session | None) -> None:
+        if (self.writer is not None and header.session_uid == self.session_uid
+                and header.packet_id == 1 and isinstance(session, Session)
+                and session.session_type in RACE_SESSION_TYPES and self.summary is not None
+                and (session.session_type != self.summary.session_type
+                     or session.track_id != self.summary.track_id)):
+            LOGGER.info("recording event=session_change uid=%s old_session_type=%s "
+                        "new_session_type=%d old_track=%s new_track=%d old_lap=%s "
+                        "session_time=%.2f", self.session_uid, self.summary.session_type,
+                        session.session_type, self.summary.track_id, session.track_id,
+                        self.summary.last_lap, header.session_time)
+            self.close("session_changed")
+            self.completed_uid = None
+        if (self.writer is not None and header.session_uid == self.session_uid
+                and self.ended_at is not None and header.packet_id == 1
+                and isinstance(session, Session) and session.session_type in RACE_SESSION_TYPES
+                and header.session_time < self.latest_game_time - RESTART_REWIND_SECONDS):
+            LOGGER.info("recording event=session_restart uid=%s old_game_time=%.2f "
+                        "new_game_time=%.2f old_lap=%s",
+                        self.session_uid, self.latest_game_time, header.session_time,
+                        self.summary.last_lap if self.summary else None)
+            self.close("session_restarted")
+            self.completed_uid = None
         if self.writer is not None and header.session_uid != self.session_uid:
+            # A lobby packet, delayed UDP datagram, or another sender is not
+            # proof that the current race finished. Only a new race Session
+            # packet can move the recorder to a different UID.
+            if (header.packet_id != 1 or not isinstance(session, Session)
+                    or session.session_type not in RACE_SESSION_TYPES):
+                self.ignored_other_session += 1
+                if self.ignored_other_session == 1 or self.ignored_other_session % 100 == 0:
+                    LOGGER.info("recording event=other_session_ignored active_uid=%s seen_uid=%s "
+                                "packet_id=%d ignored=%d", self.session_uid, header.session_uid,
+                                header.packet_id, self.ignored_other_session)
+                return
+            LOGGER.info("recording event=session_change old_uid=%s new_uid=%s "
+                        "new_session_type=%d old_lap=%s old_session_time=%.2f",
+                        self.session_uid, header.session_uid, session.session_type,
+                        self.summary.last_lap if self.summary else None, header.session_time)
             self.close("session_changed")
         if self.writer is None:
-            if header.session_uid == self.completed_uid or not isinstance(session, Session) or session.session_type != 10:
+            if (header.packet_id != 1 or not isinstance(session, Session)
+                    or session.session_type not in RACE_SESSION_TYPES):
                 return
+            if header.session_uid == self.completed_uid:
+                if (not self.completed_had_end or header.session_time >=
+                        self.completed_game_time - RESTART_REWIND_SECONDS):
+                    return
+                LOGGER.info("recording event=session_restart_after_close uid=%s "
+                            "old_game_time=%.2f new_game_time=%.2f",
+                            header.session_uid, self.completed_game_time, header.session_time)
+                self.completed_uid = None
             name = f"race-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}-{uuid4().hex[:8]}.f1cap"
             self.writer = CaptureWriter(name, max_bytes=capture.MAX_AUTO_CAPTURE_BYTES)
             self.summary = RecordingSummary(name, datetime.now().astimezone().isoformat(timespec="seconds"))
@@ -171,43 +250,102 @@ class AutoRaceRecorder:
             self.started_monotonic = now
             self.ended_at = None
             self.classified_at = None
+            self.last_packet_at = None
+            self.latest_game_time = 0.0
             print(f"Recording Grand Prix: recordings\\{name}", file=self.output, flush=True)
-            LOGGER.info("Grand Prix recording started: %s", name)
+            LOGGER.info("recording event=start name=%s uid=%s session_type=%d "
+                        "lap=%s session_time=%.2f limit_bytes=%d",
+                        name, header.session_uid, session.session_type, None,
+                        header.session_time, self.writer.max_bytes)
         assert self.writer is not None and self.summary is not None
         try:
             has_room = self.writer.write(now - self.started_monotonic, data)
         except OSError as exc:
-            LOGGER.warning("Recording failed: %s", exc)
-            has_room = False
+            LOGGER.exception("recording event=write_error uid=%s lap=%s bytes=%d error=%s",
+                             self.session_uid, self.summary.last_lap, self.writer.size, exc)
+            self.close("write_error")
+            return
         if not has_room:
+            LOGGER.warning("recording event=size_limit uid=%s lap=%s session_time=%.2f "
+                           "bytes=%d limit_bytes=%d", self.session_uid,
+                           self.summary.last_lap, header.session_time,
+                           self.writer.size, self.writer.max_bytes)
+            previous_name = self.summary.name
+            seed = self.session_packet
+            can_continue = (seed is not None and len(MAGIC) + 2 * RECORD.size
+                            + len(seed) + len(data) <= self.writer.max_bytes)
             self.close("size_limit")
+            if can_continue and seed is not None:
+                # Each file stays within the replay limit. An original Session
+                # packet at the start makes the next segment independently
+                # decodable; the packet that crossed the boundary follows it.
+                self.completed_uid = None
+                seed_header = decode_packet(seed)
+                seed_session = decode_payload(seed, seed_header)
+                assert isinstance(seed_session, Session)
+                self.observe(now, seed, seed_header, seed_session)
+                if self.summary is not None:
+                    self.summary.continued_from = previous_name
+                    self.observe(now, data, header, session)
+            else:
+                LOGGER.error("recording event=segment_unavailable uid=%s packet_id=%d "
+                             "packet_bytes=%d; current packet was not written",
+                             header.session_uid, header.packet_id, len(data))
             return
         self.summary.observe(now - self.started_monotonic, data, header)
+        self.latest_game_time = max(self.latest_game_time, header.session_time)
+        if header.packet_id == 1 and isinstance(session, Session):
+            self.session_packet = data
+        self.last_packet_at = now
         if header.packet_id == 3 and data[24:28] == b"SEND":
             self.ended_at = now
+            LOGGER.info("recording event=session_ended uid=%s lap=%s session_time=%.2f "
+                        "bytes=%d", self.session_uid, self.summary.last_lap,
+                        header.session_time, self.writer.size)
         elif header.packet_id == 8:
             self.classified_at = now
+            LOGGER.info("recording event=classification uid=%s lap=%s session_time=%.2f "
+                        "bytes=%d", self.session_uid, self.summary.last_lap,
+                        header.session_time, self.writer.size)
 
     def tick(self, now: float) -> None:
-        if self.classified_at is not None and now - self.classified_at >= CLASSIFICATION_GRACE_SECONDS:
+        quiet_since = self.last_packet_at
+        if (self.classified_at is not None and quiet_since is not None
+                and now - quiet_since >= CLASSIFICATION_GRACE_SECONDS):
             self.close("completed")
-        elif self.ended_at is not None and now - self.ended_at >= SESSION_END_GRACE_SECONDS:
+        elif (self.ended_at is not None and quiet_since is not None
+              and now - quiet_since >= SESSION_END_GRACE_SECONDS):
             self.close("ended")
 
     def close(self, status: str = "stopped") -> None:
         if self.writer is None or self.summary is None:
             return
         name = self.summary.name
+        actual_status = ("completed" if self.summary.classification_seen else
+                         "ended" if self.summary.session_ended else
+                         "continued" if status == "size_limit" else
+                         "incomplete" if status in ("stopped", "session_changed", "write_error") else status)
+        LOGGER.info("recording event=stop reason=%s status=%s name=%s uid=%s "
+                    "session_type=%s lap=%s session_time=%.2f packets=%d rejected=%d bytes=%d",
+                    status, actual_status, name, self.session_uid, self.summary.session_type,
+                    self.summary.last_lap, self.latest_game_time, self.summary.packets,
+                    self.rejected_packets,
+                    self.writer.size)
         self.writer.close()
         try:
-            data = save_summary(self.summary, status)
-            print(f"Saved {data['track']} race: recordings\\{name} ({status}).", file=self.output, flush=True)
+            data = save_summary(self.summary, actual_status, status)
+            print(f"Saved {data['track']} race: recordings\\{name} ({actual_status}).", file=self.output, flush=True)
         except OSError as exc:
             LOGGER.warning("Could not save recording metadata for %s: %s", name, exc)
             print(f"Saved recording {name}; metadata could not be written: {exc}", file=self.output, flush=True)
         self.completed_uid = self.session_uid
+        self.completed_game_time = self.latest_game_time
+        self.completed_had_end = self.summary.classification_seen or self.summary.session_ended
         self.writer = None
         self.summary = None
         self.session_uid = None
         self.ended_at = None
         self.classified_at = None
+        self.last_packet_at = None
+        self.session_packet = None
+        self.latest_game_time = 0.0

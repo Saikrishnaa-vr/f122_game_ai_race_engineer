@@ -5,10 +5,14 @@ from queue import Queue
 import socket
 import struct
 from threading import Event, Thread
+import time
 
 import pytest
 
 from app.telemetry import receiver
+from app.telemetry import capture
+from app.recordings import list_recordings
+from app.replay_dashboard import load_frames
 from app.telemetry.receiver import HOST, ReceptionStats, log_report, open_receiver, process_packet, run_receiver
 from app.telemetry.state import RaceState
 
@@ -179,3 +183,51 @@ def test_receiver_loop_reports_synthetic_packet_and_stops(
     assert "short_header=1" in final_report.message
     with open_receiver(port):
         pass
+
+
+def test_udp_auto_recording_survives_gap_and_reaches_lap_four(
+    packet_factory: Callable[..., bytes], monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
+    monkeypatch.setattr(capture, "CAPTURE_DIRECTORY", tmp_path / "recordings")
+    messages: Queue[str] = Queue()
+
+    class Output(StringIO):
+        def flush(self) -> None:
+            messages.put(self.getvalue())
+
+    stop = Event()
+    thread = Thread(target=run_receiver, args=(Output(), 0, stop),
+                    kwargs={"auto_record": True})
+    thread.start()
+    try:
+        bound = messages.get(timeout=5.0)
+        port = int(bound.split("Bound UDP 127.0.0.1:")[1].split(".")[0])
+        session = bytearray(packet_factory(1, size=632, session_uid=1234))
+        session[24 + 3] = 14
+        struct.pack_into("<H", session, 24 + 4, 5412)
+        session[24 + 6] = 11
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+            sender.sendto(session, (HOST, port))
+            for lap in (1, 2):
+                data = bytearray(packet_factory(2, size=972, session_uid=1234))
+                struct.pack_into("<7B", data, 24 + 2 * 43 + 24, 4, lap, 0, 0, 0, 0, 0)
+                sender.sendto(data, (HOST, port))
+            time.sleep(0.6)  # Longer than the socket timeout; the race must stay open.
+            sender.sendto(packet_factory(3, size=40, session_uid=0), (HOST, port))
+            for lap in (3, 4):
+                data = bytearray(packet_factory(2, size=972, session_uid=1234))
+                struct.pack_into("<7B", data, 24 + 2 * 43 + 24, 4, lap, 0, 0, 0, 0, 0)
+                sender.sendto(data, (HOST, port))
+            time.sleep(0.2)
+    finally:
+        stop.set()
+        thread.join(timeout=5.0)
+    assert not thread.is_alive()
+    [item] = list_recordings()
+    assert item["session_type"] == 11
+    assert item["last_lap"] == 4
+    assert item["status"] == "incomplete"
+    packets = [data for _elapsed, data in capture.read_capture(item["name"])]
+    assert len(packets) == 5  # Session and four laps; lobby packet is a separate UID.
+    assert packets[0] == bytes(session)
+    assert load_frames(item["name"])  # The saved entry can be opened in replay.
