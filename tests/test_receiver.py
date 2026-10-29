@@ -11,6 +11,7 @@ import pytest
 
 from app.telemetry import receiver
 from app.telemetry import capture
+from app.telemetry.payloads import SESSION
 from app.recordings import list_recordings
 from app.replay_dashboard import load_frames
 from app.telemetry.receiver import HOST, ReceptionStats, log_report, open_receiver, process_packet, run_receiver
@@ -212,6 +213,10 @@ def test_udp_auto_recording_survives_gap_and_reaches_lap_four(
                 data = bytearray(packet_factory(2, size=972, session_uid=1234))
                 struct.pack_into("<7B", data, 24 + 2 * 43 + 24, 4, lap, 0, 0, 0, 0, 0)
                 sender.sendto(data, (HOST, port))
+            malformed = bytearray(session)
+            struct.pack_into("<Q", malformed, 6, 5678)
+            malformed[24 + SESSION.size + 21 * 5 + 2] = 57
+            sender.sendto(malformed, (HOST, port))
             time.sleep(0.6)  # Longer than the socket timeout; the race must stay open.
             sender.sendto(packet_factory(3, size=40, session_uid=0), (HOST, port))
             for lap in (3, 4):

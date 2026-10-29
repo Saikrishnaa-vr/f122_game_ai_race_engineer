@@ -320,8 +320,13 @@ def run_receiver(
                     if header is not None and capture_summary is not None:
                         capture_summary.observe(now - started, data, header)
                     if header is not None and auto_recorder is not None:
-                        session_observation = state.get_fresh(1, now)
+                        session_observation = state.get_fresh(1, now) if header.packet_id == 1 else None
+                        # Only this datagram's successfully decoded Session may
+                        # start or switch a capture. A malformed Session header
+                        # can otherwise inherit the previous cached Session.
                         session = (session_observation.value if session_observation is not None
+                                   and session_observation.observed_at == now
+                                   and session_observation.header == header
                                    and isinstance(session_observation.value, Session) else None)
                         auto_recorder.observe(now, data, header, session)
                     latest = state.get_fresh(header.packet_id, now) if header is not None and header.packet_id in (1, 7, 10) else None

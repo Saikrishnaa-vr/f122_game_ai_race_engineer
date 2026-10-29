@@ -22,10 +22,11 @@ The first capture's `SEND` is followed by a quiet period and then UID 0 menu tra
 - When an automatic file reaches 2 GiB, close it as `continued` and start a linked segment with an original Session packet followed by the packet that crossed the limit. Each file remains independently readable under the replay cap. Manual `--record` still stops at 256 MiB.
 - Persist status separately from stop reason. A file without `SEND` or classification is `incomplete`; one with `SEND` is `ended`; one with classification is `completed`. The sidecar also records `continued_from` for segments.
 - Log structured `recording event=...` and `telemetry event=...` lines for boundaries, counts, bytes, write errors, last write age, state resets, interruptions, and recovery. Invalid packet logs are rate limited; periodic health lines are every 30 seconds.
+- Pass a Session observation to the recorder only when it was decoded from the current Session datagram. A header-valid but payload-invalid packet cannot borrow the previous cached Session and trigger a false race switch.
 
 ## Automated verification
 
-`python -m pytest -q --basetemp .pytest_sandbox_tmp`: **140 passed**. New cases cover race types 10/11/12 through lap 5, a temporary gap and lobby packet, a new UID race, same-UID restart/type boundaries both before and after closing, exact raw packet bytes, incomplete status, an automatic size rollover, diagnostic counters, and a real local UDP receiver run that records lap 4 after a socket timeout and an unrelated UID packet. Existing Grand Prix behavior remains covered.
+`python -m pytest -q --basetemp .pytest_sandbox_tmp`: **140 passed**. New cases cover race types 10/11/12 through lap 5, a temporary gap and lobby packet, a new UID race, same-UID restart/type boundaries both before and after closing, exact raw packet bytes, incomplete status, an automatic size rollover, diagnostic counters, and a real local UDP receiver run that records lap 4 after a socket timeout, an unrelated UID packet, and a payload-invalid Session packet. Existing Grand Prix behavior remains covered.
 
 `python scripts/verify_grand_prix.py`: **passed**. The unchanged Bahrain capture has SHA-256 `91d7ca520d1a572610bbd37cfd0b7f22e1e3f16c0ccb442892b5d3c21a081888`, 140,578 packets, zero decode errors, and lap 14. The replay library produced 2,683 frames and checked all 20 map/grid identities on lap 8.
 
