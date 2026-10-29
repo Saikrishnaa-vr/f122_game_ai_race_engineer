@@ -1,6 +1,6 @@
 # GitHub Actions trigger investigation — 2026-10-29
 
-Repository: `Saikrishnaa-vr/f122_game_ai_race_engineer` (public). PR [#1](https://github.com/Saikrishnaa-vr/f122_game_ai_race_engineer/pull/1) targets `develop` from `feature/github-branch-protection`. The branch rules require the `validate` check, so the PR remains blocked and `main` remains at the accepted baseline.
+Repository: `Saikrishnaa-vr/f122_game_ai_race_engineer` (public). PR [#1](https://github.com/Saikrishnaa-vr/f122_game_ai_race_engineer/pull/1) targets `develop` from `feature/github-branch-protection`.
 
 ## Observed evidence
 
@@ -12,4 +12,6 @@ Repository: `Saikrishnaa-vr/f122_game_ai_race_engineer` (public). PR [#1](https:
 
 ## Next action
 
-Keep PR #1 open and the required check in place. Recheck Actions runs and the public events feed after the documented event-feed delay. If `push` and `pull_request` runs are still absent, report these run IDs, commit SHAs, the active workflow path, and the enabled Actions settings through [GitHub Support or Community](https://docs.github.com/en/support/contacting-github-support). The evidence narrows the failure to event-to-workflow creation; it does not identify a confirmed GitHub backend cause. Once an eligible PR run appears and passes on the latest head, verify the protected merge to `develop` and a rejected direct push. Only the owner should promote `develop` to `main` through a separate PR.
+At the owner's request, both rulesets (`26126637`, `26126638`) were set to `disabled` on 2026-10-29. GitHub reports `protected: false` for `main` and `develop`, and PR #1 is mergeable. Disabling and re-enabling the workflow, followed by another PR reopen, had not produced an automatic run. Branch conventions and manual validation now provide the only merge discipline; GitHub does not enforce them.
+
+Recheck Actions runs and the public events feed after the documented event-feed delay. If `push` and `pull_request` runs are still absent, report these run IDs, commit SHAs, the active workflow path, and the enabled Actions settings through [GitHub Support or Community](https://docs.github.com/en/support/contacting-github-support). The evidence narrows the failure to event-to-workflow creation; it does not identify a confirmed GitHub backend cause. Once automatic PR validation works, re-enable the rulesets and verify a protected merge to `develop` and a rejected direct push. Only the owner should promote `develop` to `main` through a separate PR.

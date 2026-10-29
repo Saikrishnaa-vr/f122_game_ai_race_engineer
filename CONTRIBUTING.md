@@ -2,7 +2,11 @@
 
 `main` is the accepted product baseline. Its first commit contains the current local code and the two published replay fixtures. After that initial import, changes reach `main` only through a pull request from this repository's `develop` branch. The product owner reviews, verifies, and merges that release pull request.
 
-`develop` is the active integration branch. Create each `feature/*` or `fix/*` branch from the latest `develop`, work and test there, and open a pull request back to `develop`. Merge only after the `validate` GitHub Actions job passes. Run the game with `develop` for live feature validation when the change needs it. A passing CI run validates automated behavior and saved replay; it does not prove live UDP capture, visual fit, or game timing.
+`develop` is the active integration branch. Create each `feature/*` or `fix/*` branch from the latest `develop`, work and test there, and open a pull request back to `develop`. Run the game with `develop` for live feature validation when the change needs it. A passing CI run validates automated behavior and saved replay; it does not prove live UDP capture, visual fit, or game timing.
+
+**Current GitHub state (2026-10-29):** Both repository rulesets are disabled while GitHub fails to start automatic `push` and `pull_request` workflow runs. `main` and `develop` are unprotected; the PR and owner-only merge process above is a team convention for now. Before merging, run the local checks in the [README](README.md) or manually dispatch Validation on the exact PR head and review its result. A manual dispatch does not satisfy GitHub's required PR check if the rulesets are re-enabled. See the [CI trigger investigation](reports/github-ci-trigger-20261029.md).
+
+The disabled rulesets are retained as IDs `26126637` and `26126638`. When automatic PR checks work, re-enable those existing rulesets and verify their effective branch protection; the bootstrap script intentionally refuses to create duplicates.
 
 The release path is:
 
@@ -14,7 +18,7 @@ Before a release PR, update the relevant project progress and handoff notes with
 
 ## GitHub protection setup
 
-After the initial `main` and `develop` branches exist, configure GitHub repository rulesets or branch protection:
+When automatic PR validation works again, configure GitHub repository rulesets or branch protection:
 
 - Protect both branches: require a pull request, require the `validate` status check, block force pushes and deletion, and prevent direct pushes.
 - Restrict who can merge or otherwise update `main` to the product owner. Keep the PR and check requirements effective for that owner as well. Do not grant other users repository admin or bypass rights if owner-only control is required.
