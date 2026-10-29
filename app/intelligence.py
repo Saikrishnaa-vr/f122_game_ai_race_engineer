@@ -63,7 +63,11 @@ def race_facts(state: RaceState, engineer: Engineer, now: float) -> dict:
     facts: dict = {"session_uid": state.session_uid, "player_index": state.player_index,
                    "state_resets": state.resets, "observed_at_monotonic": now,
                    "fields": {}, "estimates": {}, "grid": [], "sector_leaders": [None, None, None],
-                   "pit_alert": None, "safety_alert": None}
+                   "pit_alert": None, "safety_alert": None,
+                   "race_phase": state.timeline.snapshot(now)}
+    green = facts["race_phase"]["status"] == "GREEN"
+    comparable_pace = green and (facts["race_phase"]["pace_ready"]
+                                 or state.timeline.last_packet_at is None)
     names = {0: "motion", 1: "session", 2: "lap", 3: "event", 4: "participants", 5: "setup",
              6: "driving", 7: "car_status",
              10: "damage", 11: "history"}
@@ -88,7 +92,7 @@ def race_facts(state: RaceState, engineer: Engineer, now: float) -> dict:
     participant_obs = state.observations.get(4)
     status_obs = state.get_fresh(7, now)
     damage_obs = state.get_fresh(10, now)
-    if (lap_obs and session_obs and status_obs and isinstance(lap_obs.value, Lap)
+    if (green and lap_obs and session_obs and status_obs and isinstance(lap_obs.value, Lap)
             and isinstance(session_obs.value, Session) and isinstance(status_obs.value, CarStatus)
             and engineer.diagnostics.fuel_rate is not None
             and engineer.diagnostics.fuel_rate > 0 and session_obs.value.track_length_m > 0
@@ -110,7 +114,7 @@ def race_facts(state: RaceState, engineer: Engineer, now: float) -> dict:
         facts["estimates"]["limiting_tyre"] = {
             "value": ("rear-left", "rear-right", "front-left", "front-right")[limiting],
             "wear_percent": wear[limiting], "method": "highest observed wear"}
-    if (lap_obs and session_obs and damage_obs and engineer.diagnostics.wear_rate
+    if (green and lap_obs and session_obs and damage_obs and engineer.diagnostics.wear_rate
             and isinstance(lap_obs.value, Lap) and isinstance(session_obs.value, Session)
             and isinstance(damage_obs.value, CarDamage) and session_obs.value.track_length_m > 0):
         projections = [(100 - wear) / rate for wear, rate in
@@ -121,12 +125,13 @@ def race_facts(state: RaceState, engineer: Engineer, now: float) -> dict:
                 "value": round(max(0.0, min(projections)), 1), "units": "laps",
                 "method": "linear extrapolation of one comparable lap pair", "confidence": "low",
                 "warning": "100% wear is a data bound, not a safe operating target"}
-    if engineer.diagnostics.ers_delta_mj_per_lap is not None and status_obs:
+    if green and engineer.diagnostics.ers_delta_mj_per_lap is not None and status_obs:
         facts["estimates"]["ers_net_change_mj_per_lap"] = {
             "value": round(engineer.diagnostics.ers_delta_mj_per_lap, 2), "units": "MJ/lap",
             "method": "two comparable lap-start energy observations", "confidence": "low"}
     if lap_obs and session_obs and isinstance(lap_obs.value, Lap) and isinstance(session_obs.value, Session):
-        facts["estimates"]["rivals"] = adjacent_rivals(lap_obs.value, session_obs.value)
+        if comparable_pace:
+            facts["estimates"]["rivals"] = adjacent_rivals(lap_obs.value, session_obs.value)
         if state.player_index is not None:
             participant = (participant_obs.value if participant_obs is not None
                            and isinstance(participant_obs.value, Participant) else None)
@@ -173,8 +178,17 @@ def race_facts(state: RaceState, engineer: Engineer, now: float) -> dict:
                 row["delta_best_lap_ms"] = (row["best_lap_ms"] - player_best
                                             if not row["is_player"] and row["best_lap_ms"] is not None
                                             and player_best is not None else None)
-        facts["estimates"]["rejoin"] = project_rejoin(
-            facts["grid"], lap_obs.value, session_obs.value, engineer.strategy_assumptions)
+                if not comparable_pace:
+                    row["pace_to_pass_seconds_per_lap"] = None
+                    row["delta_last_lap_ms"] = None
+                    if row["gap_source"] == "distance-scaled estimate":
+                        row["gap_seconds"] = None
+                        row["estimated_gap_seconds"] = None
+        facts["estimates"]["rejoin"] = (
+            {"status": "unavailable", "reason": "wait for a comparable green-flag lap after restart"}
+            if green and not comparable_pace else
+            project_rejoin(facts["grid"], lap_obs.value, session_obs.value,
+                           engineer.strategy_assumptions))
     advice = compare_pit_scenarios(state, now, engineer.diagnostics.wear_rate,
                                    engineer.strategy_assumptions)
     facts["strategy"] = asdict(advice)

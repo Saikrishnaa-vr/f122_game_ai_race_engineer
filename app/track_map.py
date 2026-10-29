@@ -50,8 +50,19 @@ class ObservedTrackMap:
     sector_splits: dict[int, tuple[float, float, float]] = field(default_factory=dict)
     last_sector_lap: int | None = None
     last_sector: int | None = None
+    last_phase_generation: int | None = None
 
     def update(self, facts: dict) -> dict:
+        phase = facts.get("race_phase", {})
+        phase_generation = phase.get("generation", 0)
+        if phase_generation != self.last_phase_generation:
+            self.last_phase_generation = phase_generation
+            self.motion_previous.clear()
+            self.slow_since.clear()
+            if self.candidate:
+                self.candidate.clear()
+                self.candidate_lap = None
+                self.started_at_line = False
         identity = (facts.get("session_uid"), facts.get("player_index"), facts.get("state_resets", 0))
         if identity != self.identity:
             self.identity = identity
@@ -162,9 +173,11 @@ class ObservedTrackMap:
                     continue
                 point = (position[0], position[2])
                 if self._valid_point(point):
-                    slow = (observed_time is not None and index in self.slow_since
+                    slow = (phase.get("status", "GREEN") == "GREEN" and observed_time is not None
+                            and index in self.slow_since
                             and observed_time - self.slow_since[index] >= 2)
-                    if observed_time is not None and not row["is_player"] and not row.get("pit_status"):
+                    if (phase.get("status", "GREEN") == "GREEN" and observed_time is not None
+                            and not row["is_player"] and not row.get("pit_status")):
                         previous = self.motion_previous.get(index)
                         if previous and 0.2 <= observed_time - previous[2] <= 5:
                             speed = math.dist(point, previous[:2]) / (observed_time - previous[2])

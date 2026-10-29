@@ -201,7 +201,9 @@ def test_state_freshness_session_changes_reordering_and_flashback(packet_factory
     assert "Driving: unavailable" in state.format_snapshot(3.0)
     apply(packet(packet_factory, 6, frame=81), 3.1)
     assert state.get_fresh(6, 3.1) is not None
-    apply(packet(packet_factory, 1, session_uid=999), 4.0)
+    new_session = packet(packet_factory, 1, session_uid=999)
+    new_session[24 + 6] = 10  # A recognized driving Session can replace the old UID.
+    apply(new_session, 4.0)
     assert state.resets == 2
     assert state.get_fresh(6, 4.0) is None
 
@@ -266,6 +268,8 @@ def test_rewind_recovers_when_flashback_event_is_lost(packet_factory: Callable[.
     resumed = bytes(packet(packet_factory, 7, frame=81, session_time=80.1))
     state.apply(resumed, decode_packet(resumed), 2.1)
     assert state.resets == 1
+    assert state.timeline.epoch == 1
+    assert any(event["kind"] == "clock_rewind" for event in state.timeline.events)
     assert state.get_fresh(6, 2.1) is None
     assert state.get_fresh(7, 2.1).header.frame_identifier == 81
 

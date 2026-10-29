@@ -21,11 +21,13 @@ class CarWatch:
 
 @dataclass(slots=True)
 class RaceStatusTracker:
-    identity: tuple[int | None, int | None, int] | None = None
+    identity: tuple[int | None, int | None, int, int] | None = None
     cars: dict[int, CarWatch] = field(default_factory=dict)
 
     def update(self, facts: dict) -> None:
-        identity = (facts.get("session_uid"), facts.get("player_index"), facts.get("state_resets", 0))
+        phase = facts.get("race_phase", {})
+        identity = (facts.get("session_uid"), facts.get("player_index"),
+                    facts.get("state_resets", 0), phase.get("generation", 0))
         if identity != self.identity:
             self.identity = identity
             self.cars.clear()
@@ -75,7 +77,8 @@ class RaceStatusTracker:
                 watch.inferred_dnf = False
             elif watch.position is None and position is not None:
                 watch.position = position
-            if (session.get("safety_car") or row.get("pit_status") or status != 2
+            if (session.get("safety_car") or phase.get("status", "GREEN") != "GREEN"
+                    or row.get("pit_status") or status != 2
                     or position is None or motion_field is None):
                 watch.player_progress_at_move = player_progress
             elif player_progress - watch.player_progress_at_move >= STATIONARY_PLAYER_LAPS * length:

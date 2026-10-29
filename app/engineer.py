@@ -145,7 +145,7 @@ class LapSample:
 @dataclass(slots=True)
 class DiagnosticMonitor:
     wear_target_percent: float = 70.0
-    identity: tuple[int | None, int | None, int] | None = None
+    identity: tuple[int | None, int | None, int, int] | None = None
     sample: LapSample | None = None
     wear_rate: tuple[float, float, float, float] | None = None
     previous_wear_rate: tuple[float, float, float, float] | None = None
@@ -158,7 +158,8 @@ class DiagnosticMonitor:
             raise ValueError("wear target must be greater than zero and at most 100")
 
     def evaluate(self, state: RaceState, now: float) -> list[str]:
-        identity = (state.session_uid, state.player_index, state.resets)
+        identity = (state.session_uid, state.player_index, state.resets,
+                    state.timeline.generation)
         if identity != self.identity or (self.last_now is not None and now < self.last_now):
             self.sample = None
             self.wear_rate = None
@@ -167,6 +168,15 @@ class DiagnosticMonitor:
             self.ers_delta_mj_per_lap = None
             self.identity = identity
         self.last_now = now
+
+        if (state.timeline.last_packet_at is not None
+                and state.timeline.status(now) != "GREEN"):
+            self.sample = None
+            self.wear_rate = None
+            self.previous_wear_rate = None
+            self.fuel_rate = None
+            self.ers_delta_mj_per_lap = None
+            return ["Estimates unavailable until fresh green-flag laps are observed."]
 
         observations = [state.get_fresh(packet_id, now) for packet_id in (1, 2, 7, 10)]
         if any(observation is None for observation in observations):
