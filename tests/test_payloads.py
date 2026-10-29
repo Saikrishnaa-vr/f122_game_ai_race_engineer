@@ -79,12 +79,15 @@ def test_lap_session_and_forecast_fields(packet_factory: Callable[..., bytes]) -
 
     data = packet(packet_factory, 1)
     struct.pack_into("<BbbBHBbBHH6B", data, 24, 3, 31, 23, 53, 5793, 10, 13, 0, 300, 3600, 80, 0, 0, 0, 0, 0)
-    struct.pack_into("<3B", data, 148, 2, 0, 1)
+    struct.pack_into("<3B", data, 148, 2, 1, 1)
+    data[625] = 19  # m_gameMode: Career '22.
     struct.pack_into("<BBBbbbbB", data, 151, 10, 15, 4, 27, 1, 21, 2, 70)
     session = decode(data)
     assert isinstance(session, Session)
     assert (session.track_id, session.total_laps, session.track_length_m, session.safety_car) == (13, 53, 5793, 2)
     assert (session.weather, session.track_c, session.air_c, session.time_left_s) == (3, 31, 23, 300)
+    assert session.network_game == 1
+    assert session.game_mode == 19
     assert (session.forecasts[0].offset_minutes, session.forecasts[0].rain_percent) == (15, 70)
 
 

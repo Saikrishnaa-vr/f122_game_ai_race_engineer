@@ -16,7 +16,8 @@ from .conversation import Conversation
 from .dashboard import DashboardState, HTML, PRACTICE_HTML
 from .engineer import Engineer
 from .intelligence import race_facts
-from .recordings import RACE_SESSION_TYPES, list_recordings, recording_info
+from .recordings import list_recordings, recording_info
+from .telemetry.session_types import DRIVING_SESSION_TYPES
 from .strategy import StrategyAssumptions
 from .telemetry.capture import read_capture
 from .telemetry.receiver import ReceptionStats, process_packet
@@ -58,13 +59,13 @@ def load_frames(name: str, pit_loss_seconds: float | None = None,
         facts = race_facts(state, engineer, now)
         session = facts["fields"].get("session")
         lap = facts["fields"].get("lap")
-        if not session or not lap or session["value"]["session_type"] not in RACE_SESSION_TYPES:
+        if not session or not lap or session["value"]["session_type"] not in DRIVING_SESSION_TYPES:
             continue
         dashboard.publish(facts, stats.status(now), False)
         frames.append(ReplayFrame(now, lap["value"]["lap_number"],
                                   zlib.compress(dashboard.snapshot().encode("utf-8"), level=3)))
     if not frames:
-        raise ValueError("capture has no Grand Prix dashboard frames")
+        raise ValueError("capture has no driving-session dashboard frames")
     return frames
 
 

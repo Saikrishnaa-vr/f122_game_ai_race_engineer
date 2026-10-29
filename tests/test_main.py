@@ -96,10 +96,25 @@ def test_drive_mode_starts_logging_capture_and_visible_dashboard(monkeypatch: py
     assert launched["history_path"] is not None
     assert launched["record_name"] is None
     assert launched["auto_record"] is True
+    assert launched["recording_policy"] == "races"
+    assert launched["bind_address"] == "127.0.0.1"
+    assert launched["sender_address"] is None
 
     with pytest.raises(SystemExit) as exc:
         __main__.main(["--drive", "--performance-mode"])
     assert exc.value.code == 2
+
+
+def test_multi_mode_and_network_cli_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+    monkeypatch.setattr(__main__, "run_receiver", lambda _output, **kwargs: calls.append(kwargs))
+    assert __main__.main(["--drive", "--auto-record-sessions", "weekend",
+                           "--bind-address", "0.0.0.0", "--sender-address", "192.168.1.20"]) == 0
+    assert calls[0]["recording_policy"] == "weekend"
+    assert calls[0]["bind_address"] == "0.0.0.0"
+    assert calls[0]["sender_address"] == "192.168.1.20"
+    with pytest.raises(SystemExit):
+        __main__.main(["--auto-record-sessions", "all-driving"])
 
 
 def test_open_dashboard_requires_live_dashboard(monkeypatch: pytest.MonkeyPatch) -> None:

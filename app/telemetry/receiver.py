@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 import logging
 import re
 import socket
+from ipaddress import IPv4Address, AddressValueError
 from threading import Event
 import time
 from typing import TextIO
@@ -168,13 +169,26 @@ def process_packet(stats: ReceptionStats, state: RaceState, data: bytes, now: fl
     return header
 
 
-def open_receiver(port: int = PORT) -> socket.socket:
-    """Bind loopback exclusively where supported; the caller owns the socket."""
+def _ipv4_address(value: str, *, bind: bool = False) -> str:
+    try:
+        address = IPv4Address(value)
+    except AddressValueError as exc:
+        raise ValueError("UDP address must be an IPv4 literal") from exc
+    if address.is_multicast or address == IPv4Address("255.255.255.255"):
+        raise ValueError("UDP address must be unicast or 0.0.0.0 for binding")
+    if not bind and address.is_unspecified:
+        raise ValueError("sender address cannot be 0.0.0.0")
+    return str(address)
+
+
+def open_receiver(port: int = PORT, bind_address: str = HOST) -> socket.socket:
+    """Bind UDP exclusively where supported; loopback remains the default."""
+    bind_address = _ipv4_address(bind_address, bind=True)
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
         if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
-        sock.bind((HOST, port))
+        sock.bind((bind_address, port))
         sock.settimeout(SOCKET_TIMEOUT_SECONDS)
         return sock
     except OSError:
@@ -192,10 +206,15 @@ def run_receiver(
     llm_endpoint: str | None = None, llm_model: str | None = None,
     stop_name: str | None = None,
     auto_record: bool = False,
+    bind_address: str = HOST, sender_address: str | None = None,
+    recording_policy: str = "races",
 ) -> None:
     """Receive until interrupted; never send a datagram or touch the game."""
     if stop is None:
         stop = Event()
+    bind_address = _ipv4_address(bind_address, bind=True)
+    if sender_address is not None:
+        sender_address = _ipv4_address(sender_address)
     if open_dashboard and (not dashboard or performance_mode):
         raise ValueError("opening the dashboard requires an enabled dashboard")
     if stop_name is not None and not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,80}\.stop", stop_name):
@@ -205,9 +224,9 @@ def run_receiver(
         CONTROL_DIRECTORY.mkdir(parents=True, exist_ok=True)
         if stop_path.exists():
             raise ValueError(f"stop file already exists: {stop_path}")
-    with open_receiver(port) as sock:
+    with open_receiver(port, bind_address) as sock:
         actual_port = sock.getsockname()[1]
-        message = f"Bound UDP {HOST}:{actual_port}. Binding alone does not confirm telemetry."
+        message = f"Bound UDP {bind_address}:{actual_port}. Binding alone does not confirm telemetry."
         print(message, file=output, flush=True)
         LOGGER.info(message)
         if stop_path is not None:
@@ -230,10 +249,11 @@ def run_receiver(
                     raise OSError("dashboard port 8765 is already in use; close the other dashboard first")
         model = IntentModel(llm_endpoint, llm_model) if llm_endpoint and llm_model else None
         dashboard_state = DashboardState(Conversation(model), history_path)
-        from ..recordings import AutoRaceRecorder, RecordingSummary, save_summary
+        from ..recordings import AutoRaceRecorder, RecordingPolicy, RecordingSummary, save_summary
         capture = CaptureWriter(record_name) if record_name is not None else None
         capture_summary = (RecordingSummary(record_name) if record_name is not None else None)
-        auto_recorder = AutoRaceRecorder(output) if auto_record else None
+        auto_recorder = AutoRaceRecorder(output, RecordingPolicy(recording_policy)) if auto_record else None
+        sender_rejected = 0
         connection_status = stats.status(started)
         next_recording_diagnostic_at = started + 30.0
         history = None
@@ -277,10 +297,17 @@ def run_receiver(
         try:
             while not stop.is_set() and (stop_path is None or not stop_path.exists()):
                 try:
-                    data, _address = sock.recvfrom(MAX_DATAGRAM_SIZE)
+                    data, address = sock.recvfrom(MAX_DATAGRAM_SIZE)
                 except socket.timeout:
-                    pass
+                    data = None
                 else:
+                    if sender_address is not None and address[0] != sender_address:
+                        sender_rejected += 1
+                        if sender_rejected == 1 or sender_rejected % 100 == 0:
+                            LOGGER.warning("telemetry event=sender_rejected source=%s expected=%s count=%d",
+                                           address[0], sender_address, sender_rejected)
+                        data = None
+                if data is not None:
                     now = time.monotonic()
                     if capture is not None:
                         try:
@@ -434,6 +461,9 @@ def run_receiver(
             if history is not None:
                 history.close()
             log_report(stats, time.monotonic(), final=True)
+            if sender_rejected:
+                LOGGER.info("telemetry event=sender_filter_summary rejected=%d expected=%s",
+                            sender_rejected, sender_address)
 
 
 def replay_capture(output: TextIO, name: str, alert_config: AlertConfig | None = None,

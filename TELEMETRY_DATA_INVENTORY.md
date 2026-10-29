@@ -4,12 +4,12 @@
 
 ## Data flow and where to find it
 
-F1 22 sends its **2022 UDP format** to `127.0.0.1:20777`. The receiver validates each packet's header and exact size, decodes selected fields, keeps a freshness-aware in-memory race state, and publishes dashboard facts about every 0.5 seconds. The default `--drive` launcher also writes:
+F1 22 sends its **2022 UDP format** to `127.0.0.1:20777` by default. An explicitly configured LAN listener may bind another IPv4 address and filter by sender IP. The receiver validates each packet's header and exact size, decodes selected fields, keeps a freshness-aware in-memory race state, and publishes dashboard facts about every 0.5 seconds. The default `--drive` launcher also writes:
 
 | Artifact | Location under this project | Contents |
 | --- | --- | --- |
 | Raw race capture | `recordings/*.f1cap` | Original UDP datagrams with elapsed monotonic time per packet. Replaying these runs current decoders and dashboard code against the old race. This is the richest source for new analysis. |
-| Recording metadata | `recordings/*.json`, when a sidecar has been saved | Track, local start date/time, player name, session type, scheduled/last lap, last observed position, duration, packet count, status, stop reason, and prior segment when a 2 GiB file boundary is crossed. `incomplete` means no `SEND` or classification was captured. Older captures may have no sidecar; the replay library derives metadata by scanning the capture. |
+| Recording metadata | `recordings/*.json`, when a sidecar has been saved | Track, local start date/time, player name, session type/name, game mode ID/name, online/offline flag when observed, scheduled/last lap, count of distinct lap numbers observed, last observed position, duration, packet count, status, completion evidence, stop reason, participant count/player indices, and prior segment when a 2 GiB file boundary is crossed. `incomplete` means no `SEND` or classification was captured. Older captures may have no sidecar; the replay library derives metadata by scanning the capture. |
 | Structured history | `data/races.sqlite3` | Sampled player laps, game-reported sectors, selected event codes, issued advice, session details, and practice setup labels. It is much smaller than a raw capture. |
 | Diagnostic log | `logs/race-engineer.log` | Receiver status, packet counts, errors, snapshots, and engineer reports. Useful for debugging, not the canonical analysis dataset. |
 | Dashboard facts | `app/intelligence.py` via the local dashboard | Fresh decoded fields, full running order, map data, and estimates. These are generated in memory; the dashboard snapshot is not a separate historical database. |
@@ -17,6 +17,8 @@ F1 22 sends its **2022 UDP format** to `127.0.0.1:20777`. The receiver validates
 All these race-engineer paths are under this D: project for source runs. The launchers also direct their process temporary files to `data/tmp` on D:. The repository's `.gitignore` excludes `data/`, `logs/`, and `recordings/`. Two deliberately published compressed captures are in `fixtures/`; run `scripts/restore_replay_fixtures.py` in a fresh checkout to reconstruct the raw races. Raw captures include player and participant names; review them before sharing.
 
 The raw capture retains packet bytes even when the app does not currently decode their payload. The structured database stores only selected, sampled values. The raw capture uses a custom `F122CAP1` header followed by repeated little-endian `<double elapsed_seconds, uint16 packet_size, packet_bytes>` records; use `app/telemetry/capture.py:read_capture()` instead of parsing it from scratch.
+
+Automatic capture defaults to race Session codes 10, 11 and 12. `--auto-record-sessions weekend` includes practice 1–4 and qualifying 5–9; `all-driving` additionally includes Time Trial 13. The 2022 Session packet has a separate `m_gameMode` ID that can identify Grand Prix, Career '22, Online Custom and other documented modes; there is no dedicated LAN host/client indicator. `m_networkGame` says only offline (0) or online (1), not UDP broadcast state. Recordings from a network session can include changing player indices and participant counts; those observations do not prove who joined or left without additional evidence. A gap in packet arrival does not end a recording. The replay library labels old sidecars with no end evidence as unknown confidence rather than rewriting the raw data.
 
 ## Decoded data available today
 

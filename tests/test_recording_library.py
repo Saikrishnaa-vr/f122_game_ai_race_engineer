@@ -13,7 +13,7 @@ import zlib
 import pytest
 
 from app import replay_dashboard
-from app.recordings import AutoRaceRecorder, list_recordings, recording_info
+from app.recordings import AutoRaceRecorder, RecordingPolicy, list_recordings, recording_info
 from app.telemetry import capture
 from app.telemetry.payloads import Session, decode_payload
 from app.telemetry.protocol import decode_packet
@@ -273,7 +273,7 @@ def test_library_lists_and_selects_multiple_recordings(packet_factory, monkeypat
     base = f"http://127.0.0.1:{server.server_address[1]}"
     try:
         with urlopen(base + "/", timeout=2) as response:
-            assert b"Saved races" in response.read()
+            assert b"Saved sessions" in response.read()
         with urlopen(base + "/api/replays", timeout=2) as response:
             items = json.load(response)
         assert len(items) == 2
@@ -343,3 +343,143 @@ def test_saved_race_rebuilds_current_dashboard_identity_from_raw_packets(packet_
     assert rows[16]["team_color"] == markers[16]["team_color"] == "#e32731"
     assert rows[33]["driver_code"] == markers[33]["driver_code"] == "VER"
     assert rows[33]["team_color"] == markers[33]["team_color"] == "#3357d7"
+
+
+def test_policy_records_only_driving_sessions_selected_by_user(packet_factory) -> None:
+    practice = session_packet(packet_factory, 1001, 1)
+    qualifying = session_packet(packet_factory, 1002, 7)
+    time_trial = session_packet(packet_factory, 1003, 13)
+    race = session_packet(packet_factory, 1004, 12)
+    recorder = AutoRaceRecorder(StringIO())
+    for packet in (practice, qualifying, time_trial, race):
+        recorder.observe(1.0, packet, decode_packet(packet), decode_payload(packet, decode_packet(packet)))
+    recorder.close()
+    assert [item["session_type"] for item in list_recordings()] == [12]
+
+    recorder = AutoRaceRecorder(StringIO(), RecordingPolicy("weekend"))
+    for now, packet in enumerate((practice, qualifying, time_trial, race)):
+        recorder.observe(float(now), packet, decode_packet(packet), decode_payload(packet, decode_packet(packet)))
+    recorder.close()
+    assert {item["session_type"] for item in list_recordings()} == {1, 7, 12}
+    assert all(item["session_type"] != 13 for item in list_recordings())
+
+    recorder = AutoRaceRecorder(StringIO(), RecordingPolicy("all-driving"))
+    recorder.observe(0.0, time_trial, decode_packet(time_trial),
+                     decode_payload(time_trial, decode_packet(time_trial)))
+    recorder.close()
+    assert {item["session_type"] for item in list_recordings()} == {1, 7, 12, 13}
+
+
+def test_race_closes_on_real_practice_transition_without_merging(packet_factory) -> None:
+    recorder = AutoRaceRecorder(StringIO())
+    race = session_packet(packet_factory, 1101)
+    lap = lap_packet(packet_factory, 1101, 3)
+    practice = session_packet(packet_factory, 1102, 1)
+    next_race = session_packet(packet_factory, 1103, 11)
+    for now, packet in enumerate((race, lap, practice, next_race)):
+        recorder.observe(float(now), packet, decode_packet(packet),
+                         decode_payload(packet, decode_packet(packet)) if packet[5] == 1 else None)
+    recorder.close()
+    items = {item["session_uid"]: item for item in list_recordings()}
+    assert set(items) == {1101, 1103}
+    assert items[1101]["status"] == "incomplete"
+    assert items[1101]["stop_reason"] == "session_changed"
+    assert [data for _, data in capture.read_capture(items[1101]["name"])] == [race, lap]
+    assert [data for _, data in capture.read_capture(items[1103]["name"])] == [next_race]
+
+
+def test_network_session_metadata_and_player_rejoin(packet_factory) -> None:
+    recorder = AutoRaceRecorder(StringIO())
+    race = bytearray(session_packet(packet_factory, 1201))
+    race[148 + 1] = 1  # m_networkGame at the 2022 Session payload offset.
+    race = bytes(race)
+    recorder.observe(0.0, race, decode_packet(race), decode_payload(race, decode_packet(race)))
+    participant = bytearray(packet_factory(4, size=1257, session_uid=1201))
+    participant[24] = 3
+    recorder.observe(1.0, bytes(participant), decode_packet(participant), None)
+    rejoined = packet_factory(2, size=972, session_uid=1201, player=4)
+    recorder.observe(2.0, rejoined, decode_packet(rejoined), None)
+    recorder.tick(40.0)
+    assert recorder.writer is not None
+    recorder.close()
+    [item] = list_recordings()
+    assert item["network_game"] == 1
+    assert item["network_mode"] == "Online"
+    assert item["session_name"] == "Race"
+    assert item["completion_confidence"] == "no_end_signal"
+    assert item["player_indices_observed"] == [2, 4]
+    assert item["last_active_cars"] == 3
+    assert item["packets"] == 3
+
+
+def test_old_sidecar_gets_honest_unknown_completion_without_rewrite(packet_factory) -> None:
+    race = bytearray(session_packet(packet_factory, 1301))
+    race[149] = 1
+    race[625] = 19
+    race = bytes(race)
+    writer = capture.CaptureWriter("race-20261029-120000-000001.f1cap")
+    writer.write(0.0, race)
+    writer.close()
+    path = capture.capture_path("race-20261029-120000-000001.f1cap")
+    old = {"name": path.name, "size_bytes": path.stat().st_size,
+           "session_type": 10, "packets": 1, "status": "incomplete", "started_at": "2026-10-29"}
+    sidecar = path.with_suffix(".json")
+    sidecar.write_text(json.dumps(old), encoding="utf-8")
+    details = recording_info(path.name)
+    assert details["completion_confidence"] == "unknown"
+    assert details["game_mode"] == 19
+    assert details["game_mode_name"] == "Career '22"
+    assert details["network_mode"] == "Online"
+    assert json.loads(sidecar.read_text(encoding="utf-8")) == old
+
+
+def test_capture_packet_count_includes_header_valid_undecodable_raw_bytes(packet_factory) -> None:
+    recorder = AutoRaceRecorder(StringIO())
+    race = session_packet(packet_factory, 1401)
+    recorder.observe(0.0, race, decode_packet(race), decode_payload(race, decode_packet(race)))
+    malformed = bytearray(session_packet(packet_factory, 1401))
+    malformed[148 + 2] = 57  # Forecast count exceeds the protocol maximum.
+    recorder.observe(1.0, bytes(malformed), decode_packet(malformed), None)
+    recorder.close()
+    [item] = list_recordings()
+    assert item["packets"] == 2
+    assert [packet for _, packet in capture.read_capture(item["name"])] == [race, bytes(malformed)]
+
+
+def test_unknown_and_menu_session_packets_do_not_open_capture(packet_factory) -> None:
+    recorder = AutoRaceRecorder(StringIO(), RecordingPolicy("all-driving"))
+    for uid, session_type in ((0, 10), (1501, 0), (1502, 99)):
+        packet = session_packet(packet_factory, uid, session_type)
+        recorder.observe(1.0, packet, decode_packet(packet), decode_payload(packet, decode_packet(packet)))
+    assert recorder.writer is None
+    assert list_recordings() == []
+
+
+@pytest.mark.parametrize("session_type", [1, 7, 13])
+def test_opted_in_nonrace_session_is_discoverable_and_replayable(packet_factory, session_type) -> None:
+    recorder = AutoRaceRecorder(StringIO(), RecordingPolicy("all-driving"))
+    session = session_packet(packet_factory, 1600 + session_type, session_type)
+    lap = lap_packet(packet_factory, 1600 + session_type, 1)
+    recorder.observe(0.0, session, decode_packet(session),
+                     decode_payload(session, decode_packet(session)))
+    recorder.observe(0.5, lap, decode_packet(lap), None)
+    recorder.close()
+    [item] = list_recordings()
+    assert item["session_type"] == session_type
+    assert item["laps_observed"] == 1
+    assert replay_dashboard.load_frames(item["name"])
+
+
+def test_same_uid_game_mode_change_keeps_races_separate(packet_factory) -> None:
+    recorder = AutoRaceRecorder(StringIO())
+    first = bytearray(session_packet(packet_factory, 1701))
+    second = bytearray(first)
+    first[625] = 3
+    second[625] = 19
+    for now, raw in ((0.0, bytes(first)), (1.0, bytes(second))):
+        recorder.observe(now, raw, decode_packet(raw), decode_payload(raw, decode_packet(raw)))
+    recorder.close()
+    items = list_recordings()
+    assert len(items) == 2
+    assert {item["game_mode"] for item in items} == {3, 19}
+    assert {item["status"] for item in items} == {"incomplete"}
