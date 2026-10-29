@@ -236,3 +236,53 @@ def test_udp_auto_recording_survives_gap_and_reaches_lap_four(
     assert len(packets) == 5  # Session and four laps; lobby packet is a separate UID.
     assert packets[0] == bytes(session)
     assert load_frames(item["name"])  # The saved entry can be opened in replay.
+
+
+def test_explicit_remote_bind_and_sender_filter(packet_factory, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(capture, "CAPTURE_DIRECTORY", tmp_path / "recordings")
+    messages: Queue[str] = Queue()
+
+    class Output(StringIO):
+        def flush(self) -> None:
+            messages.put(self.getvalue())
+
+    stop = Event()
+    thread = Thread(target=run_receiver, args=(Output(), 0, stop),
+                    kwargs={"auto_record": True, "bind_address": "0.0.0.0",
+                            "sender_address": "127.0.0.1"})
+    thread.start()
+    try:
+        bound = messages.get(timeout=5.0)
+        port = int(bound.split("Bound UDP 0.0.0.0:")[1].split(".")[0])
+        session = bytearray(packet_factory(1, size=632, session_uid=1701))
+        session[24 + 6] = 10
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+            sender.sendto(session, (HOST, port))
+        time.sleep(0.2)
+    finally:
+        stop.set()
+        thread.join(timeout=5.0)
+    assert not thread.is_alive()
+    assert [item["session_uid"] for item in list_recordings()] == [1701]
+
+    messages = Queue()
+    stop = Event()
+    thread = Thread(target=run_receiver, args=(Output(), 0, stop),
+                    kwargs={"auto_record": True, "sender_address": "192.0.2.1"})
+    thread.start()
+    try:
+        bound = messages.get(timeout=5.0)
+        port = int(bound.split("Bound UDP 127.0.0.1:")[1].split(".")[0])
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+            sender.sendto(session, (HOST, port))
+        time.sleep(0.2)
+    finally:
+        stop.set()
+        thread.join(timeout=5.0)
+    assert len(list_recordings()) == 1  # The rejected sender created no new file.
+
+
+def test_udp_bind_address_validation() -> None:
+    for address in ("example.org", "224.0.0.1", "255.255.255.255"):
+        with pytest.raises(ValueError):
+            open_receiver(0, address)

@@ -59,6 +59,8 @@ class Session:
     pit_ideal_lap: int = 0
     pit_latest_lap: int = 0
     marshal_zones: tuple[tuple[float, int], ...] = ()
+    network_game: int | None = None  # m_networkGame: 0 offline, 1 online; not a LAN identifier.
+    game_mode: int | None = None  # m_gameMode: documented game-mode ID, not a LAN flag.
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,7 +219,7 @@ def decode_payload(data: bytes, header: PacketHeader) -> Payload | None:
                 raise PacketError("payload_value", "invalid marshal zone")
             zones.append((round(start, 5), flag))
         safety_offset = HEADER.size + SESSION.size + 21 * 5
-        safety, _network, forecast_count = struct.unpack_from("<3B", data, safety_offset)
+        safety, network_game, forecast_count = struct.unpack_from("<3B", data, safety_offset)
         if forecast_count > 56:
             raise PacketError("payload_value", f"invalid forecast count {forecast_count}")
         forecasts = []
@@ -226,8 +228,9 @@ def decode_payload(data: bytes, header: PacketHeader) -> Payload | None:
             forecasts.append(Forecast(f[0], f[1], f[2], f[3], f[5], f[7]))
         pit_offset = safety_offset + 3 + 56 * FORECAST.size + 2 + 3 * 4
         pit_ideal, pit_latest = struct.unpack_from("<2B", data, pit_offset)
+        game_mode = data[pit_offset + 3 + 9]  # rejoin-position byte, then nine assist/display bytes.
         return Session(v[0], v[1], v[2], v[3], v[4], v[5], v[6], v[8], safety, tuple(forecasts),
-                   pit_ideal, pit_latest, tuple(zones))
+                   pit_ideal, pit_latest, tuple(zones), network_game, game_mode)
     if packet_id == 2:
         v = _entry(LAP, data, player)
         rivals = []

@@ -23,6 +23,10 @@ The companion binds to `127.0.0.1:20777`, validates the 2022 packet header and l
 
 The master brief's release acceptance criteria remain open until the full application is validated. A passing test suite or clean UDP capture is evidence for its specific scope, not a substitute for HUD, audio, strategy and performance checks.
 
+## Multi-mode recording follow-up (2026-10-29)
+
+The automatic recorder now uses an explicit race-only default policy for 2022 Session types 10–12. `--auto-record-sessions weekend` adds practice and qualifying; `all-driving` adds Time Trial. It keeps recording through packet loss, closes on a recognized transition, and retains partial captures. The decoder preserves the Session packet's game mode ID and offline/online bit; neither explicitly identifies a LAN host or client. A remote companion can opt into a LAN UDP bind address and sender IPv4 filter; loopback remains the default and the dashboard HTTP listener stays local. The replay library exposes game/session labels, packet count, observed lap count and completion evidence, including honest unknown confidence for older sidecars. Automated unit/socket tests and the unchanged Bahrain fixture are the offline gate; Career and LAN transition/reconnect behavior still require game sessions with correlated logs.
+
 ## Dashboard evolution requested after the completed Grand Prix
 
 | User outcome | Code status | Required gameplay validation / limitation |

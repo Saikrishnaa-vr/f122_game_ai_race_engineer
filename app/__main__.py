@@ -38,6 +38,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--dashboard", action="store_true", help="start optional loopback dashboard")
     parser.add_argument("--open-dashboard", action="store_true", help="open the local dashboard in a browser after it starts")
     parser.add_argument("--drive", action="store_true", help="start dashboard, browser, history and a new raw capture together")
+    parser.add_argument("--auto-record-sessions", choices=("races", "weekend", "all-driving"),
+                        default="races", help="automatic capture policy with --drive (default: races)")
+    parser.add_argument("--bind-address", default=HOST, metavar="IPV4",
+                        help="UDP listen address; default 127.0.0.1; use 0.0.0.0 only for remote senders")
+    parser.add_argument("--sender-address", metavar="IPV4",
+                        help="accept telemetry only from this sender IPv4 address")
     parser.add_argument("--performance-mode", action="store_true", help="reduce reports and disable dashboard")
     parser.add_argument("--voice-model", metavar="FOLDER", help="enable offline F8 voice using a Vosk model")
     parser.add_argument("--voice-input-device", type=int, metavar="INDEX", help="sounddevice microphone index")
@@ -57,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.open_dashboard and (not args.dashboard or args.performance_mode or args.replay
                                 or args.debrief or args.export_history):
         parser.error("--open-dashboard requires a live --dashboard session")
+    if args.auto_record_sessions != "races" and not args.drive:
+        parser.error("--auto-record-sessions requires --drive")
     record_name = args.record
     try:
         alert_config = AlertConfig(cooldown_seconds=args.alert_cooldown)
@@ -112,7 +120,8 @@ def main(argv: list[str] | None = None) -> int:
                              voice_model=args.voice_model, voice_input_device=args.voice_input_device,
                              voice_volume=args.voice_volume, llm_endpoint=args.llm_endpoint,
                              llm_model=args.llm_model, stop_name=args.stop_file,
-                             auto_record=args.drive)
+                             auto_record=args.drive, bind_address=args.bind_address,
+                             sender_address=args.sender_address, recording_policy=args.auto_record_sessions)
         except KeyboardInterrupt:
             LOGGER.info("Receiver stopped by user; socket closed.")
             print("\nReceiver stopped; socket closed.")
@@ -121,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
             LOGGER.exception("Receiver or capture failed.")
             print(
                 f"Receiver or capture error: {exc}. "
-                f"For UDP binding, check {HOST}:{PORT}, port conflicts and local firewall settings.",
+                f"For UDP binding, check {args.bind_address}:{PORT}, port conflicts and local firewall settings.",
                 file=sys.stderr,
             )
             return 1
