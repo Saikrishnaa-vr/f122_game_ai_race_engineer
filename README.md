@@ -118,6 +118,16 @@ An optional OpenAI-compatible chat-completions endpoint may be used for **intent
 
 Plain HTTP is accepted only for loopback; remote endpoints require HTTPS. Set `RACE_ENGINEER_LLM_API_KEY` if the endpoint needs authentication. Question text, but no telemetry, is sent to that endpoint. Calls have a two-second timeout and fall back to deterministic keyword routing. A large local model can compete with game GPU resources; leave this off during performance-sensitive play.
 
+## Offline analytics from raw races
+
+`scripts/extract_analytics.py` rebuilds a separate, indexed SQLite dataset from a saved `.f1cap` recording. It decodes player setup parameters, per-car Session History laps/stints and final classification, samples motion/driving/fuel/wear with packet provenance, preserves unobserved gaps and flashback epochs, and reports cautious fuel, wear, pace, pit, neutralized-lap and practice summaries. It does not run in the receiver or add live dashboard load. Output is under `data/analytics/` on D: for a source run; the original recording is never modified. See [schema, field audit and method](ANALYTICS_DATASET.md) and the [Bahrain sample](reports/bahrain-analytics-20261030.md).
+
+```powershell
+.\.venv\Scripts\python.exe scripts\extract_analytics.py grand-prix-20261028-212717.f1cap
+```
+
+Use `--replace` only to rebuild an existing **derived** database after decoder changes; `--as-of SECONDS` restricts summaries to observations known by that capture time. The historical layer is not a trained ML model. Additional practice, LAN, SC/VSC and varied race captures are needed before learning calibrated strategy or uncertainty.
+
 ## History and debrief
 
 By default, structured session, lap, sector, event and alert records are stored locally at `data\races.sqlite3`. New practice laps also store the observed setup fingerprint; preset labels are local to the track. The schema adds a nullable fingerprint column on first run and preserves existing lap rows. Raw UDP is stored only when capture is explicitly enabled; microphone audio is never stored. Source runs write under the D: project folder; packaged runs write beside the packaged executable, so keep the entire app folder on D:. The live and replay launchers also set their process temp directory to `data\tmp` on D:. The database records only data available at sampling time. Menu session UID 0 and repeated button (`BUTN`) and all-car speed-trap (`SPTP`) notifications are excluded from session lists and debrief events; older database rows remain intact. A debrief reports observed best/mean lap, final observed position, median comparable fuel, wear and pace changes, and the sector with the largest observed variation when enough history exists. Sector validity flags are stored but not interpreted. It does not claim hypothetical strategic time gain.
@@ -134,11 +144,11 @@ Review telemetry logs and exports before sharing. The rotating diagnostic log is
 
 ## Protocol and limits
 
-The packed 2022 header is 24-byte little-endian `<HBBBBQfIBB`. The receiver checks format/version, packet ID, exact datagram length, player indices, and finite session time. Player data comes from Motion (0), Session/forecast (1), Lap (2), Event (3), Participant (4), Car Telemetry (6), Car Status (7), Car Damage (10), and Session History (11). Shared Motion coordinates, Lap timing, Participant names and per-car Session History support the external map and grid. IDs 5, 8 and 9 are counted only. Four-wheel arrays are rear-left, rear-right, front-left, front-right. Rival analysis does not claim rival fuel, tyre condition or ERS. Restricted telemetry may withhold further opponent data.
+The packed 2022 header is 24-byte little-endian `<HBBBBQfIBB`. The receiver checks format/version, packet ID, exact datagram length, player indices, and finite session time. Player data comes from Motion (0), Session/forecast (1), Lap (2), Event (3), Participant (4), Car Setups (5), Car Telemetry (6), Car Status (7), Final Classification (8), Car Damage (10), and Session History (11). Shared Motion coordinates, Lap timing, Participant names and per-car Session History support the external map and grid. Setup parameters and final classification are decoded for **offline analysis**; Lobby Info (9) is counted only. Four-wheel arrays are rear-left, rear-right, front-left, front-right. Rival analysis does not claim rival fuel, tyre condition or ERS. Restricted telemetry may withhold further opponent data.
 
 Every decoded observation has a packet source and monotonic timestamp. Driving/lap/status expire after two seconds, session/damage after four, event/history after ten. Session/player transitions and `FLBK` clear state. If the flashback event is lost, two consecutive packets on a game clock more than two seconds behind the latest observation also clear state; a single delayed packet is ignored. Packet loss, pause and out-of-order UDP can still limit accuracy. A stale field is not reused as current data.
 
-The [EA F1 22 UDP specification](https://forums.ea.com/discussions/f1-games-franchise-discussion-en/f1-22-udp-specification/8418392) is the primary protocol reference. Its linked v16 document has not yet been compared field by field in this workspace. A previous live run confirmed 40-byte Event datagrams; the receiver rejects other Event lengths.
+The [EA F1 22 UDP specification](https://forums.ea.com/discussions/f1-games-franchise-discussion-en/f1-22-udp-specification/8418392) is the primary protocol reference. Its linked v16 document was compared with all 12 packet IDs for the [analytics field audit](ANALYTICS_DATASET.md). A previous live run confirmed 40-byte Event datagrams; the receiver rejects other Event lengths. The audit does not replace HUD validation of game values.
 
 ## Gameplay acceptance check
 

@@ -5,8 +5,8 @@ import struct
 import pytest
 
 from app.telemetry.payloads import (
-    CarDamage, CarStatus, CarTelemetry, Event, Lap, Motion, Participant,
-    Session, SessionHistory, decode_payload,
+    CarDamage, CarSetup, CarStatus, CarTelemetry, Event, FinalClassification,
+    Lap, Motion, Participant, Session, SessionHistory, decode_payload,
 )
 from app.telemetry.protocol import PACKET_TYPES, PacketError, decode_packet
 from app.telemetry.state import RaceState
@@ -160,6 +160,35 @@ def test_rival_history_is_kept_separately_and_expires(packet_factory: Callable[.
     raw = bytes(flashback)
     state.apply(raw, decode_packet(raw), 2.0)
     assert state.get_fresh_history(3, 2.0) is None
+
+
+def test_official_v16_setup_and_classification_layouts(packet_factory: Callable[..., bytes]) -> None:
+    setup_raw = packet(packet_factory, 5)
+    values = (7, 8, 60, 55, -2.5, -1.1, 0.07, 0.2, 4, 5, 6, 7, 8, 9, 95, 56,
+              22.1, 22.2, 23.1, 23.2, 6, 28.5)
+    struct.pack_into("<4B4f8B4fBf", setup_raw, 24 + 2 * 49, *values)
+    setup = decode(setup_raw)
+    assert isinstance(setup, CarSetup)
+    assert setup.parameters.front_wing == 7
+    assert setup.parameters.front_camber == pytest.approx(-2.5)
+    assert setup.parameters.tyre_pressure_psi == pytest.approx((22.1, 22.2, 23.1, 23.2))
+    assert setup.parameters.fuel_load_kg == pytest.approx(28.5)
+
+    raw = packet(packet_factory, 8)
+    raw[24] = 2
+    struct.pack_into("<6BId3B8B8B8B", raw, 25,
+                     1, 14, 2, 25, 1, 3, 90_123, 5500.5, 5, 1, 2,
+                     *([18, 19] + [0] * 6), *([16, 17] + [0] * 6),
+                     *([6, 14] + [0] * 6))
+    result = decode(raw)
+    assert isinstance(result, FinalClassification)
+    assert len(result.cars) == 2
+    assert result.cars[0].position == 1
+    assert result.cars[0].best_lap_ms == 90_123
+    assert result.cars[0].tyre_stints == ((18, 16, 6), (19, 17, 14))
+    raw[24] = 23
+    with pytest.raises(PacketError, match="classification car count"):
+        decode(raw)
 
 
 def test_bad_values_are_explicit(packet_factory: Callable[..., bytes]) -> None:

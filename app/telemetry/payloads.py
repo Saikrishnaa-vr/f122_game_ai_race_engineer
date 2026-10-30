@@ -21,6 +21,8 @@ TELEMETRY = struct.Struct("<HfffBbHBBH4H4B4BH4f4B")
 STATUS = struct.Struct("<5B3f2H2BH3BbfB3fB")
 DAMAGE = struct.Struct("<4f4B4B18B")
 HISTORY_LAP = struct.Struct("<IHHHB")
+SETUP = struct.Struct("<4B4f8B4fBf")
+CLASSIFICATION = struct.Struct("<6BId3B8B8B8B")
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +116,30 @@ class CarSetup:
     """Stable identity for the game's 49-byte setup; preset names are user supplied."""
 
     fingerprint: str
+    parameters: "SetupParameters | None" = None
+
+
+@dataclass(frozen=True, slots=True)
+class SetupParameters:
+    front_wing: int
+    rear_wing: int
+    on_throttle: int
+    off_throttle: int
+    front_camber: float
+    rear_camber: float
+    front_toe: float
+    rear_toe: float
+    front_suspension: int
+    rear_suspension: int
+    front_anti_roll_bar: int
+    rear_anti_roll_bar: int
+    front_suspension_height: int
+    rear_suspension_height: int
+    brake_pressure: int
+    brake_bias: int
+    tyre_pressure_psi: tuple[float, float, float, float]
+    ballast: int
+    fuel_load_kg: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,7 +209,28 @@ class SessionHistory:
     tyre_stints: tuple[tuple[int, int, int], ...]
 
 
-Payload: TypeAlias = Motion | Session | Lap | Participant | CarSetup | CarTelemetry | CarStatus | CarDamage | Event | SessionHistory
+@dataclass(frozen=True, slots=True)
+class ClassificationEntry:
+    car_index: int
+    position: int
+    laps: int
+    grid_position: int
+    points: int
+    pit_stops: int
+    result_status: int
+    best_lap_ms: int
+    total_race_s: float
+    penalties_s: int
+    penalty_count: int
+    tyre_stints: tuple[tuple[int, int, int], ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FinalClassification:
+    cars: tuple[ClassificationEntry, ...]
+
+
+Payload: TypeAlias = Motion | Session | Lap | Participant | CarSetup | CarTelemetry | CarStatus | CarDamage | Event | SessionHistory | FinalClassification
 
 
 def _finite(values: tuple[object, ...]) -> None:
@@ -274,15 +321,30 @@ def decode_payload(data: bytes, header: PacketHeader) -> Payload | None:
                     raise PacketError("payload_value", "participant name is not valid UTF-8") from None
         return Participant(v[1], v[3], v[5], name, v[8], tuple(names), tuple(team_ids), tuple(race_numbers))
     if packet_id == 5:
-        setup_size = (1102 - HEADER.size) // CAR_COUNT
-        start = HEADER.size + player * setup_size
-        return CarSetup(blake2s(data[start:start + setup_size], digest_size=8).hexdigest())
+        start = HEADER.size + player * SETUP.size
+        raw = data[start:start + SETUP.size]
+        v = SETUP.unpack(raw)
+        _finite(v)
+        parameters = SetupParameters(*v[:16], v[16:20], v[20], v[21])
+        return CarSetup(blake2s(raw, digest_size=8).hexdigest(), parameters)
     if packet_id == 6:
         v = _entry(TELEMETRY, data, player)
         return CarTelemetry(v[0], v[1], v[2], v[3], v[5], v[6], v[7], v[14:18], v[18:22], v[23:27])
     if packet_id == 7:
         v = _entry(STATUS, data, player)
         return CarStatus(v[5], v[6], v[7], v[13], v[14], v[15], v[17], v[18], v[19], v[20], v[21], v[11])
+    if packet_id == 8:
+        count = data[HEADER.size]
+        if count > CAR_COUNT:
+            raise PacketError("payload_value", f"invalid classification car count {count}")
+        cars = []
+        for index in range(count):
+            v = _entry(CLASSIFICATION, data, index, HEADER.size + 1)
+            if v[10] > 8:
+                raise PacketError("payload_value", f"invalid classification stint count {v[10]}")
+            stints = tuple((v[11 + n], v[19 + n], v[27 + n]) for n in range(v[10]))
+            cars.append(ClassificationEntry(index, *v[:10], stints))
+        return FinalClassification(tuple(cars))
     if packet_id == 10:
         v = _entry(DAMAGE, data, player)
         return CarDamage(v[0:4], v[4:8], v[8:12], v[12], v[13], v[14], v[20], v[21])
