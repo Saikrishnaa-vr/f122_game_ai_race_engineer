@@ -434,7 +434,7 @@ def summarize_dataset(path: Path, *, as_of_elapsed_s: float | None = None) -> di
         gaps = defaultdict(list)
         for row in db.execute("SELECT * FROM gaps WHERE to_elapsed_s<=?", (cutoff,)):
             gaps[row["segment_id"]].append((row["from_elapsed_s"], row["to_elapsed_s"]))
-        fuel, wear, degradation, pit_loss = [], [], [], []
+        fuel, wear, degradation, pit_loss, neutralized_behavior = [], [], [], [], []
         for segment in segments:
             if segment["session_type"] is None:
                 continue  # A terminal clock-reset epoch has no verified race context.
@@ -443,6 +443,30 @@ def summarize_dataset(path: Path, *, as_of_elapsed_s: float | None = None) -> di
                             if row["pit_status"] != 0 or (index > 0 and row["pit_stops"] is not None
                             and row["pit_stops"] > (rows[index - 1]["pit_stops"] or 0))}
             for earlier, later in zip(rows, rows[1:]):
+                safety_codes = {item[0] for item in db.execute("""SELECT DISTINCT
+                    json_extract(data_json,'$.safety_car') FROM observations
+                    WHERE segment_id=? AND kind='weather_context'
+                    AND elapsed_s>? AND elapsed_s<=?""",
+                    (segment["id"], earlier["elapsed_s"], later["elapsed_s"]))}
+                observed_phases = {phase for phase in (earlier["race_status"],
+                                   later["race_status"]) if phase in ("SC", "VSC")}
+                observed_phases.update({1: "SC", 2: "VSC"}[code]
+                                       for code in safety_codes if code in (1, 2))
+                interval_has_gap = any(start < later["elapsed_s"] and end > earlier["elapsed_s"]
+                                       for start, end in gaps[segment["id"]])
+                if (observed_phases and not interval_has_gap
+                        and later["lap_number"] == earlier["lap_number"] + 1
+                        and later["lap_number"] not in pit_affected
+                        and earlier["lap_number"] not in pit_affected
+                        and lap_validity.get((segment["id"], later["lap_number"]), 0) & 1):
+                    phase = next(iter(observed_phases)) if len(observed_phases) == 1 else "MIXED"
+                    neutralized_behavior.append({"segment_id": segment["id"],
+                        "lap_number": later["lap_number"], "phase_observed": phase,
+                        "available_at_s": later["elapsed_s"], "lap_ms": later["lap_ms"],
+                        "fuel_used_kg": (round(earlier["fuel_kg"] - later["fuel_kg"], 3)
+                            if earlier["fuel_kg"] is not None and later["fuel_kg"] is not None
+                            and earlier["fuel_kg"] >= later["fuel_kg"] else None),
+                        "quality": "estimated"})
                 comparable = (later["lap_number"] == earlier["lap_number"] + 1
                               and earlier["lap_number"] not in pit_affected
                               and later["lap_number"] not in pit_affected
@@ -452,13 +476,8 @@ def summarize_dataset(path: Path, *, as_of_elapsed_s: float | None = None) -> di
                               and all(lap_validity.get((segment["id"], item["lap_number"]), 0) & 1
                                       for item in (earlier, later))
                               and earlier["actual_compound"] == later["actual_compound"]
-                              and not any(start < later["elapsed_s"] and end > earlier["elapsed_s"]
-                                          for start, end in gaps[segment["id"]])
-                              and not db.execute("""SELECT 1 FROM observations
-                                  WHERE segment_id=? AND kind='weather_context'
-                                  AND elapsed_s>? AND elapsed_s<=?
-                                  AND json_extract(data_json,'$.safety_car')!=0 LIMIT 1""",
-                                  (segment["id"], earlier["elapsed_s"], later["elapsed_s"])).fetchone())
+                              and not interval_has_gap
+                              and not safety_codes.intersection((1, 2, 3)))
                 if not comparable:
                     continue
                 key = {"segment_id": segment["id"], "lap_number": later["lap_number"],
@@ -564,6 +583,7 @@ def summarize_dataset(path: Path, *, as_of_elapsed_s: float | None = None) -> di
                 "fuel_burn": fuel, "tyre_wear": wear,
                 "lap_time_change": degradation, "pit_lap_excess": pit_loss,
                 "rival_relative_pace": rival_pace,
+                "neutralized_lap_behavior": neutralized_behavior,
                 "corner_braking_bins": corner_comparisons,
                 "safety_observation_counts": status_counts,
                 "practice_setups": practice_setups,

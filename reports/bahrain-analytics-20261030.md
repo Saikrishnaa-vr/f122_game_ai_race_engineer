@@ -13,6 +13,7 @@ The dataset has one classified race segment (2022 Session type 10, Bahrain track
 | Public rival timing | 19 rivals had at least two common valid lap numbers | Uses Session History only. No rival fuel, wear, private setup or planned stop. |
 | Repeated braking distance bins | 14 bins with samples on at least two player laps | 100 m distance bins, not named corners or a proven faster line. |
 | SC/VSC observation changes | 28 Session context changes, all SC code 0 | This race contains **no observed SC or VSC period**. Counts are context updates, not seconds spent green. |
+| SC/VSC fuel and lap-time samples | **0** | The offline extractor can report observed neutralized laps, but this capture cannot establish their behavior. |
 | Practice setup comparison | 0 | A race capture cannot validate practice presets. |
 | Temporal backtest plumbing | 10 next-lap predictions, median absolute error **1,570 ms** | Median of three earlier observed valid laps. This is an offline illustration, not a trained or calibrated lap-time model. |
 

@@ -120,7 +120,7 @@ Plain HTTP is accepted only for loopback; remote endpoints require HTTPS. Set `R
 
 ## Offline analytics from raw races
 
-`scripts/extract_analytics.py` rebuilds a separate, indexed SQLite dataset from a saved `.f1cap` recording. It decodes player setup parameters, per-car Session History laps/stints and final classification, samples motion/driving/fuel/wear with packet provenance, preserves unobserved gaps and flashback epochs, and reports cautious fuel, wear, pace, pit and practice summaries. It does not run in the receiver or add live dashboard load. Output is under `data/analytics/` on D: for a source run; the original recording is never modified. See [schema, field audit and method](ANALYTICS_DATASET.md) and the [Bahrain sample](reports/bahrain-analytics-20261030.md).
+`scripts/extract_analytics.py` rebuilds a separate, indexed SQLite dataset from a saved `.f1cap` recording. It decodes player setup parameters, per-car Session History laps/stints and final classification, samples motion/driving/fuel/wear with packet provenance, preserves unobserved gaps and flashback epochs, and reports cautious fuel, wear, pace, pit, neutralized-lap and practice summaries. It does not run in the receiver or add live dashboard load. Output is under `data/analytics/` on D: for a source run; the original recording is never modified. See [schema, field audit and method](ANALYTICS_DATASET.md) and the [Bahrain sample](reports/bahrain-analytics-20261030.md).
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\extract_analytics.py grand-prix-20261028-212717.f1cap

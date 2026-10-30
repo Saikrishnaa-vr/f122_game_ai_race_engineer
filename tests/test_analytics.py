@@ -22,10 +22,12 @@ def _packet(factory: Callable[..., bytes], packet_id: int, *, frame: int,
                              frame=frame, session_time=time, session_uid=uid))
 
 
-def _session(factory, frame: int, time: float, uid: int = 101) -> bytes:
+def _session(factory, frame: int, time: float, uid: int = 101,
+             safety: int = 0) -> bytes:
     raw = _packet(factory, 1, frame=frame, time=time, uid=uid)
     struct.pack_into("<BbbBHBbBHH6B", raw, 24, 0, 30, 25, 10, 5412, 10, 3,
                      0, 900, 900, 80, 0, 0, 0, 0, 0)
+    raw[148] = safety
     return bytes(raw)
 
 
@@ -192,3 +194,31 @@ def test_capture_change_does_not_publish_mismatched_dataset(
         analytics.extract_capture("changing.f1cap")
     assert not (tmp_path / "analytics" / "changing.sqlite3").exists()
     assert not list((tmp_path / "analytics").glob("*.tmp"))
+
+
+@pytest.mark.parametrize(("safety", "phase"), [(1, "SC"), (2, "VSC")])
+def test_neutralized_lap_behavior_is_observed_without_normal_pace_inference(
+    packet_factory: Callable[..., bytes], monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path, safety: int, phase: str,
+) -> None:
+    monkeypatch.setattr(capture, "CAPTURE_DIRECTORY", tmp_path / "recordings")
+    monkeypatch.setattr(analytics, "ANALYTICS_DIRECTORY", tmp_path / "analytics")
+    writer = capture.CaptureWriter("sc.f1cap")
+    packets = [(0.0, _session(packet_factory, 1, 10.0)),
+               (0.1, _status(packet_factory, 2, 10.1, 20.0)),
+               (0.2, _damage(packet_factory, 3, 10.2, 4.0)),
+               (1.0, _lap(packet_factory, 4, 11.0, 2)),
+               (1.1, _history(packet_factory, 5, 11.1, 1)),
+               (1.2, _session(packet_factory, 6, 11.2, safety=safety)),
+               (2.0, _status(packet_factory, 7, 12.0, 18.8)),
+               (2.1, _damage(packet_factory, 8, 12.1, 6.0)),
+               (3.0, _lap(packet_factory, 9, 13.0, 3)),
+               (3.1, _history(packet_factory, 10, 13.1, 2))]
+    for elapsed, raw in packets:
+        assert writer.write(elapsed, raw)
+    writer.close()
+    summary = analytics.summarize_dataset(Path(analytics.extract_capture("sc.f1cap")["dataset"]))
+    assert summary["neutralized_lap_behavior"][0]["phase_observed"] == phase
+    assert summary["neutralized_lap_behavior"][0]["fuel_used_kg"] == pytest.approx(1.2)
+    assert not summary["fuel_burn"]
+    assert not summary["lap_time_change"]
