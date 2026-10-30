@@ -12,6 +12,7 @@ Build a separate, read-only Windows pit-wall companion using F1 22's 2022 UDP ou
 - `app/intelligence.py` and `app/rivals.py`: serializable fresh race facts, low confidence estimates, deterministic question answers, limited adjacent-rival position/pace analysis.
 - `app/conversation.py`: optional LLM intent classification only, with deterministic offline fallback.
 - `app/history.py`: local SQLite structured laps/events/advice, debrief statistics, CSV/JSON exports.
+- `app/analytics.py` and `scripts/extract_analytics.py`: opt-in offline extraction from original `.f1cap` bytes into rebuildable `data/analytics/*.sqlite3`, with packet provenance, UID/epoch separation, quality flags, per-car lap/stint/final-result tables and as-of summaries. The live receiver does not call this pipeline. See [the field audit and schema](ANALYTICS_DATASET.md) and [Bahrain sample](reports/bahrain-analytics-20261030.md).
 - `app/dashboard.py`, `app/dashboard.html` and `app/track_map.py`: optional FastAPI/WebSocket loopback dashboard with typed questions, observed track outline, fresh car markers and selectable full-grid lap logs.
 - `app/voice.py`: optional Vosk F8 push-to-talk and pyttsx3 speech in worker threads.
 - `app/__main__.py`: CLI; `scripts/start.ps1`, `scripts/build.ps1` for Windows startup/package build.
@@ -19,6 +20,8 @@ Build a separate, read-only Windows pit-wall companion using F1 22's 2022 UDP ou
 See `README.md` for setup, flags and gameplay validation. Baseline runtime needs no third-party packages. Dashboard, voice and packaging extras are optional.
 
 `PROJECT_PROGRESS.md` is the milestone tracker. Phase 1 connection verification was accepted as complete on 2026-10-28; the remaining phases retain separate implementation and validation gates.
+
+The analytics feature branch is `feature/race-analytics-foundation`, based on the latest fetched `develop` at `3bddefd8`. Its offline gate is **175 tests**, three dashboard JavaScript syntax checks, and the unchanged Bahrain full replay/hash verification. The original `.f1cap` and `fixtures/` files were not modified. The local derived SQLite file and downloaded EA DOCX stay ignored under `data/` on D:. Real practice preset, LAN, SC/VSC and multi-race analytics validation remain open. No training or live analytics worker was added.
 
 The same day, Phase 2/3 offline work added two-packet confirmation of a rewound game clock when an `FLBK` event is lost, a one-time game-provided pit-window reminder, finish-line rounding tolerance in the strategy availability check, and more player fields in the freshness-aware console snapshot for HUD comparison. The full ten-lap capture replayed cleanly; the game-provided pit window was 5–9 before the stop and 0/0 after it. The suite passed 91 tests at that point. See `reports/phase23-offline-20261028.md`; live HUD, recovery, reminder and performance checks remain open.
 
@@ -50,7 +53,7 @@ Reliability/latency pass on 2026-10-30: `app/telemetry/receiver.py` logs per-pac
 
 On 2026-10-28, a user drove ten laps of a 14-lap race, entering the pit lane at the end of lap 5 and changing actual compound code 18 (soft) to 19 (medium) in lap 6. The recorder saved `recordings/verification-20261028-193443.f1cap` (103,702 datagrams, zero header/payload errors). Structured history contains ten completed laps, one pit stop, and sector data; the final replay has fresh fuel, wear, ERS and lap estimates. `reports/verification-20261028-193443.md` has the details and limits. Live gameplay exposed two estimator defects: five-second report sampling missed lap starts, and fractional lap distance just past integer track length cleared rates. Both have regression tests. History now suppresses menu UID 0 and repeated button/speed-trap events in debriefs. The suite passes 97 tests with a workspace `--basetemp`.
 
-A prior user-run gameplay session received 9,102 structurally valid UDP datagrams and a live 40-byte Event packet, with no header/payload errors in the final report. The user visually matched a last-lap value once. This does not verify every decoded field, strategy recommendation, voice, dashboard or game performance. The EA v16 document linked by the official forum has not yet been compared field by field locally.
+A prior user-run gameplay session received 9,102 structurally valid UDP datagrams and a live 40-byte Event packet, with no header/payload errors in the final report. The user visually matched a last-lap value once. This does not verify every decoded field, strategy recommendation, voice, dashboard or game performance. The EA v16 document was compared with the decoder for the [offline field audit](ANALYTICS_DATASET.md); gameplay HUD comparison remains necessary.
 
 The baseline Python environment has pytest but lacks FastAPI, uvicorn, Vosk, sounddevice, pyttsx3 and PyInstaller. A `uv pip install` attempt for dashboard/packaging extras failed because this sandbox forbids the PyPI socket. Optional services and executable packaging therefore have not been run here. The project uses `.uv_cache` under its own directory because the default C: uv cache path cannot be initialized in this sandbox.
 
