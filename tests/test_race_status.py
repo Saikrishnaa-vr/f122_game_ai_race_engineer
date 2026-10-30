@@ -72,6 +72,15 @@ def test_game_result_status_immediate_and_pit_safety_reset_stationary_clock() ->
     assert not reset["facts"]["grid"][1].get("out_of_race")
 
 
+def test_game_disqualification_is_distinct_from_dnf_and_removed_from_map() -> None:
+    dashboard = DashboardState()
+    result = published(dashboard, facts(1, rival_status=5))
+    row = result["facts"]["grid"][1]
+    assert row["race_status"] == "DSQ"
+    assert row["race_status_source"] == "game result status"
+    assert [marker["car_index"] for marker in result["track_map"]["markers"]] == [2]
+
+
 def test_missing_interval_and_restart_do_not_infer_stationary_dnf() -> None:
     dashboard = DashboardState()
     for lap, phase, generation in ((1, "GREEN", 1), (3, "STALE", 2),

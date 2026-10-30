@@ -85,6 +85,24 @@ def test_capture_limit_does_not_write_partial_record(
     assert len(list(capture.read_capture("bounded.f1cap"))) == 1
 
 
+def test_writer_refuses_invalid_time_and_preserves_exact_received_bytes() -> None:
+    raw = b"\x00\xff\x7f\x00payload"
+    writer = capture.CaptureWriter("integrity.f1cap")
+    try:
+        assert writer.write(1.25, raw)
+        for elapsed in (float("nan"), float("inf"), -1.0, 1.0):
+            with pytest.raises(ValueError, match="timestamps"):
+                writer.write(elapsed, b"rejected")
+        with pytest.raises(ValueError, match="record length"):
+            writer.write(2.0, b"x" * 65536)
+        assert writer.write(1.25, raw)
+    finally:
+        writer.close()
+    assert list(capture.read_capture("integrity.f1cap")) == [(1.25, raw), (1.25, raw)]
+    with pytest.raises(FileExistsError):
+        capture.CaptureWriter("integrity.f1cap")
+
+
 @pytest.mark.parametrize("name", ["../game.f1cap", "C:\\game.f1cap", "no-extension", ".hidden.f1cap"])
 def test_rejects_unsafe_capture_names(name: str) -> None:
     with pytest.raises(ValueError, match="simple filename"):
@@ -103,6 +121,10 @@ def test_truncated_and_invalid_capture_are_errors(tmp_path: Path) -> None:
         list(capture.read_capture("bad.f1cap"))
     path.write_bytes(capture.MAGIC + capture.RECORD.pack(float("nan"), 0))
     with pytest.raises(ValueError, match="timestamps"):
+        list(capture.read_capture("bad.f1cap"))
+    path.write_bytes(capture.MAGIC + capture.RECORD.pack(2.0, 1) + b"a"
+                     + capture.RECORD.pack(1.0, 1) + b"b")
+    with pytest.raises(ValueError, match="nondecreasing"):
         list(capture.read_capture("bad.f1cap"))
 
 

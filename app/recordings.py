@@ -221,7 +221,17 @@ def list_recordings() -> list[dict]:
             if item["session_type"] in DRIVING_SESSION_TYPES and item["packets"] > 0:
                 result.append(item)
         except (OSError, ValueError) as exc:
-            LOGGER.warning("Skipping unreadable recording %s: %s", path.name, exc)
+            LOGGER.warning("Unreadable recording %s: %s", path.name, exc)
+            try:
+                started_at = _started_at(path)
+            except OSError:
+                continue  # The file disappeared while the library was scanned.
+            result.append({"name": path.name, "started_at": started_at,
+                           "track": "Unreadable recording", "session_type": None,
+                           "session_name": "Unknown session", "game_mode_name": "Unknown mode",
+                           "network_mode": "Unknown", "last_lap": None,
+                           "laps_observed": None, "packets": 0, "status": "unreadable",
+                           "completion_confidence": "unknown", "error": str(exc)})
     return sorted(result, key=lambda item: item["started_at"], reverse=True)
 
 

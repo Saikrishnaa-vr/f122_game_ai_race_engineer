@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, deque
 from dataclasses import dataclass, field
+import json
 import logging
 import re
 import socket
@@ -16,7 +17,6 @@ import webbrowser
 
 from ..engineer import AlertConfig, AlertMonitor, Engineer
 from ..history import HistoryWorker
-from ..intelligence import race_facts
 from ..logging_setup import LOGGER
 from ..paths import data_root
 from ..strategy import StrategyAssumptions
@@ -74,6 +74,18 @@ class ReceptionStats:
     invalid_at_last_report: int = 0
     payload_invalid_at_last_report: int = 0
     counts: Counter[int] = field(default_factory=Counter)
+    decoded_counts: Counter[int] = field(default_factory=Counter)
+    payload_invalid_ids: Counter[int] = field(default_factory=Counter)
+    header_rejected_claimed_ids: Counter[int | str] = field(default_factory=Counter)
+    counts_at_last_report: Counter[int] = field(default_factory=Counter)
+    frame_uid: int | None = None
+    last_frame_by_id: dict[int, int] = field(default_factory=dict)
+    frame_discontinuities: int = 0
+    out_of_order_frames: int = 0
+    duplicate_frames: int = 0
+    last_decoded_at: float | None = None
+    last_source: tuple[str, int] | None = None
+    source_changes: int = 0
     errors: Counter[str] = field(default_factory=Counter)
     last_error: str | None = None
 
@@ -85,12 +97,44 @@ class ReceptionStats:
             self.invalid += 1
             self.errors[exc.reason] += 1
             self.last_error = str(exc)
+            if len(data) >= 6:
+                claimed_id = data[5]
+                self.header_rejected_claimed_ids[
+                    claimed_id if claimed_id in PACKET_TYPES else "unknown"] += 1
             return None
         self.valid += 1
         self.counts[header.packet_id] += 1
         self.last_valid_at = now
         self.last_header = header
         return header
+
+    def record_source(self, address: tuple[str, int]) -> bool:
+        """A UDP source is an observation, not authenticated sender identity."""
+        changed = self.last_source is not None and address != self.last_source
+        if changed:
+            self.source_changes += 1
+        self.last_source = address
+        return changed
+
+    def record_decoded(self, header: PacketHeader, now: float) -> None:
+        self.decoded_counts[header.packet_id] += 1
+        self.last_decoded_at = now
+        if self.frame_uid != header.session_uid:
+            self.frame_uid = header.session_uid
+            self.last_frame_by_id.clear()
+        previous = self.last_frame_by_id.get(header.packet_id)
+        if previous is not None:
+            distance = (header.frame_identifier - previous) & 0xFFFFFFFF
+            if distance == 0:
+                self.duplicate_frames += 1
+            elif distance >= 0x80000000:
+                self.out_of_order_frames += 1
+                return
+            elif distance > 1:
+                # Packet types have different send rates: this is not proof
+                # that UDP datagrams were lost.
+                self.frame_discontinuities += 1
+        self.last_frame_by_id[header.packet_id] = header.frame_identifier
 
     def status(self, now: float) -> str:
         if self.last_valid_at is None:
@@ -110,6 +154,11 @@ class ReceptionStats:
             f"{packet_id}:{PACKET_TYPES[packet_id][0]}={count}"
             for packet_id, count in sorted(self.counts.items())
         ) or "none"
+        id_rates = ", ".join(
+            f"{packet_id}:{(count - self.counts_at_last_report[packet_id]) / elapsed:.1f}/s"
+            for packet_id, count in sorted(self.counts.items())
+        ) if elapsed > 0 else "none"
+        self.counts_at_last_report = self.counts.copy()
         errors = ", ".join(f"{name}={count}" for name, count in sorted(self.errors.items())) or "none"
         last_error = f"; last invalid: {self.last_error}" if self.last_error else ""
         status = self.status(now)
@@ -129,12 +178,53 @@ class ReceptionStats:
             if header is not None
             else ""
         )
+        source = (f"{self.last_source[0]}:{self.last_source[1]}"
+                  if self.last_source is not None else "unknown")
+        decoded_age = (f"{max(0.0, now - self.last_decoded_at):.1f}s"
+                       if self.last_decoded_at is not None else "none")
         return (
             f"Status: {status}; datagrams={self.datagrams}, valid={self.valid}, "
             f"invalid={self.invalid}, payload errors={self.payload_invalid}, valid rate={rate:.1f} packets/s "
-            f"(last {elapsed:.1f}s); IDs: {packets}; errors: {errors}"
+            f"(last {elapsed:.1f}s); IDs: {packets}; ID rates: {id_rates}; "
+            f"decoded IDs: {dict(sorted(self.decoded_counts.items()))}; "
+            f"payload rejected IDs: {dict(sorted(self.payload_invalid_ids.items()))}; "
+            f"header rejected claimed IDs: {dict(sorted(self.header_rejected_claimed_ids.items(), key=lambda item: str(item[0])))}; "
+            f"frame discontinuities={self.frame_discontinuities}, frame out-of-order={self.out_of_order_frames}, "
+            f"frame duplicates={self.duplicate_frames}; last decoded age={decoded_age}; "
+            f"UDP source={source}, source changes={self.source_changes}; errors: {errors}"
             f"{last_error}{latest}.{advice}"
         )
+
+
+@dataclass(slots=True)
+class LoopTiming:
+    """Bounded recent stage durations; report intervals do not retain every packet."""
+
+    samples: dict[str, deque[float]] = field(default_factory=dict)
+    counts: Counter[str] = field(default_factory=Counter)
+    totals_ms: Counter[str] = field(default_factory=Counter)
+    maxima_ms: dict[str, float] = field(default_factory=dict)
+
+    def record(self, stage: str, elapsed_ns: int) -> None:
+        milliseconds = max(0.0, elapsed_ns / 1_000_000)
+        self.samples.setdefault(stage, deque(maxlen=256)).append(milliseconds)
+        self.counts[stage] += 1
+        self.totals_ms[stage] += milliseconds
+        self.maxima_ms[stage] = max(self.maxima_ms.get(stage, 0.0), milliseconds)
+
+    def drain(self) -> dict[str, dict]:
+        result = {}
+        for stage, count in sorted(self.counts.items()):
+            recent = sorted(self.samples[stage])
+            result[stage] = {"count": count,
+                             "mean_ms": round(self.totals_ms[stage] / count, 3),
+                             "p95_recent_ms": round(recent[int((len(recent) - 1) * 0.95)], 3),
+                             "max_ms": round(self.maxima_ms[stage], 3)}
+        self.samples.clear()
+        self.counts.clear()
+        self.totals_ms.clear()
+        self.maxima_ms.clear()
+        return result
 
 
 def log_report(stats: ReceptionStats, now: float, *, final: bool = False) -> str:
@@ -157,9 +247,12 @@ def process_packet(stats: ReceptionStats, state: RaceState, data: bytes, now: fl
             state.apply(data, header, now)
         except PacketError as exc:
             stats.payload_invalid += 1
+            stats.payload_invalid_ids[header.packet_id] += 1
             stats.errors[f"payload_{exc.reason}"] += 1
             stats.last_error = str(exc)
         else:
+            if state.session_uid == header.session_uid:
+                stats.record_decoded(header, now)
             if previous_uid is not None and (previous_uid != state.session_uid
                                             or previous_player != state.player_index):
                 LOGGER.info("telemetry event=state_reset old_uid=%s new_uid=%s "
@@ -236,6 +329,7 @@ def run_receiver(
         last_strategy_key: tuple[int | None, str] | None = None
         real_time_alert_messages: set[str] = set()
         stats = ReceptionStats(started_at=started, last_report_at=started)
+        timing = LoopTiming()
         state = RaceState()
         engineer = Engineer(alerts=AlertMonitor(alert_config or AlertConfig()),
                             strategy_assumptions=strategy_assumptions or StrategyAssumptions())
@@ -291,6 +385,9 @@ def run_receiver(
                 LOGGER.warning("Voice unavailable: %s", exc)
                 print(f"Voice unavailable: {exc}", file=output, flush=True)
                 radio = None
+        from ..dashboard_worker import DashboardPublisher
+        publisher = (DashboardPublisher(dashboard_state)
+                     if (dashboard_server is not None or radio is not None) else None)
         if record_name is not None:
             print(f"Recording raw UDP datagrams to recordings\\{record_name} (maximum 256 MiB).", file=output, flush=True)
             LOGGER.info("Opt-in recording started: %s", record_name)
@@ -308,7 +405,16 @@ def run_receiver(
                                            address[0], sender_address, sender_rejected)
                         data = None
                 if data is not None:
+                    packet_started_ns = time.perf_counter_ns()
                     now = time.monotonic()
+                    previous_source = stats.last_source
+                    source_changed = stats.record_source(address)
+                    if previous_source is None or source_changed:
+                        LOGGER.log(logging.WARNING if source_changed else logging.INFO,
+                                   "telemetry event=udp_source source=%s:%d previous=%s "
+                                   "changes=%d authenticated=false",
+                                   address[0], address[1], previous_source, stats.source_changes)
+                    capture_started_ns = time.perf_counter_ns()
                     if capture is not None:
                         try:
                             has_room = capture.write(now - started, data)
@@ -340,12 +446,17 @@ def run_receiver(
                             message = "Recording stopped; telemetry reception continues."
                             print(message, file=output, flush=True)
                             LOGGER.warning(message)
+                    if capture is not None or record_name is not None:
+                        timing.record("manual_capture", time.perf_counter_ns() - capture_started_ns)
                     previous_status = stats.status(now)
+                    decode_started_ns = time.perf_counter_ns()
                     header = process_packet(stats, state, data, now)
+                    timing.record("decode_state", time.perf_counter_ns() - decode_started_ns)
                     if header is None and auto_recorder is not None:
                         auto_recorder.reject(stats.last_error or "invalid_packet")
                     if header is not None and capture_summary is not None:
                         capture_summary.observe(now - started, data, header)
+                    recording_started_ns = time.perf_counter_ns()
                     if header is not None and auto_recorder is not None:
                         session_observation = state.get_fresh(1, now) if header.packet_id == 1 else None
                         # Only this datagram's successfully decoded Session may
@@ -356,9 +467,11 @@ def run_receiver(
                                    and session_observation.header == header
                                    and isinstance(session_observation.value, Session) else None)
                         auto_recorder.observe(now, data, header, session)
+                        timing.record("automatic_capture", time.perf_counter_ns() - recording_started_ns)
                     latest = state.get_fresh(header.packet_id, now) if header is not None and header.packet_id in (1, 7, 10) else None
                     if (header is not None and latest is not None
                             and latest.header.frame_identifier == header.frame_identifier):
+                        engineer_started_ns = time.perf_counter_ns()
                         for alert in engineer.on_packet(state, now):
                             priority = "critical" if alert.priority < 0 else "high" if alert.priority == 0 else "normal"
                             print(f"Radio [{priority}]: {alert.message}", file=output, flush=True)
@@ -370,6 +483,7 @@ def run_receiver(
                                 lap_obs = state.get_fresh(2, now)
                                 lap_number = lap_obs.value.lap_number if lap_obs and hasattr(lap_obs.value, "lap_number") else None
                                 history.record_advice(state.session_uid, lap_number, alert.message)
+                        timing.record("engineer", time.perf_counter_ns() - engineer_started_ns)
                     if history is not None and header is not None and header.packet_id == 3:
                         history.observe(state, now)
                     if header is not None and previous_status != "receiving":
@@ -381,6 +495,7 @@ def run_receiver(
                         )
                         print(message, file=output, flush=True)
                         LOGGER.info(message)
+                    timing.record("packet_total", time.perf_counter_ns() - packet_started_ns)
 
                 now = time.monotonic()
                 current_status = stats.status(now)
@@ -397,18 +512,31 @@ def run_receiver(
                     if now >= next_recording_diagnostic_at:
                         auto_recorder.diagnostics(now)
                         next_recording_diagnostic_at = now + 30.0
-                if (dashboard and not performance_mode or radio is not None) and now - last_facts_at >= 0.5:
-                    try:
-                        dashboard_state.publish(race_facts(state, engineer, now),
-                                                stats.status(now), performance_mode,
-                                                radio.status if radio is not None else "off")
-                    except (TypeError, ValueError) as exc:
-                        LOGGER.warning("Could not publish race facts: %s", exc)
+                if publisher is not None and now - last_facts_at >= 0.5:
+                    submit_started_ns = time.perf_counter_ns()
+                    publisher.submit(state, engineer, stats.status(now), performance_mode,
+                                     radio.status if radio is not None else "off")
+                    timing.record("dashboard_snapshot_submit",
+                                  time.perf_counter_ns() - submit_started_ns)
                     last_facts_at = now
                 report_interval = 10.0 if performance_mode else REPORT_INTERVAL_SECONDS
                 if now - stats.last_report_at >= report_interval:
+                    LOGGER.info("telemetry event=receiver_latency stages=%s",
+                                json.dumps(timing.drain(), separators=(",", ":")))
+                    LOGGER.info("telemetry event=race_freshness uid=%s status=%s "
+                                "last_race_packet_age_s=%s state_reordered=%d "
+                                "timeline_generation=%d",
+                                state.session_uid, state.timeline.status(now),
+                                round(now - state.timeline.last_packet_at, 2)
+                                if state.timeline.last_packet_at is not None else None,
+                                state.reordered, state.timeline.generation)
                     if history is not None:
                         history.observe(state, now)
+                        LOGGER.info("telemetry event=history_health enqueued=%d processed=%d "
+                                    "dropped=%d high_watermark=%d pending=%d worker_alive=%s",
+                                    history.enqueued, history.processed, history.dropped,
+                                    history.queue_high_watermark, history.queue.qsize(),
+                                    history.thread.is_alive())
                     print(log_report(stats, now), file=output, flush=True)
                     snapshot = state.format_snapshot(now)
                     print(snapshot, file=output, flush=True)
@@ -452,6 +580,8 @@ def run_receiver(
                         LOGGER.warning("Could not save recording metadata: %s", exc)
             if auto_recorder is not None:
                 auto_recorder.close()
+            if publisher is not None:
+                publisher.close()
             if radio is not None:
                 radio.close()
             if dashboard_server is not None:

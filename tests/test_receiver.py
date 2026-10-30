@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from io import StringIO
+import json
 import logging
 from queue import Queue
 import socket
@@ -14,7 +15,7 @@ from app.telemetry import capture
 from app.telemetry.payloads import SESSION
 from app.recordings import list_recordings
 from app.replay_dashboard import load_frames
-from app.telemetry.receiver import HOST, ReceptionStats, log_report, open_receiver, process_packet, run_receiver
+from app.telemetry.receiver import HOST, LoopTiming, ReceptionStats, log_report, open_receiver, process_packet, run_receiver
 from app.telemetry.state import RaceState
 
 
@@ -35,6 +36,40 @@ def test_status_counts_and_rate_use_valid_packets_only(packet_factory: Callable[
     assert "Valid telemetry stopped" in stats.report(8.0)
     stats.record(packet_factory(), 9.0)
     assert stats.status(9.0) == "receiving"
+
+
+def test_health_distinguishes_rejected_ids_frame_gaps_and_udp_source(packet_factory) -> None:
+    stats, state = ReceptionStats(0.0, 0.0), RaceState()
+    assert not stats.record_source(("127.0.0.1", 50123))
+    assert stats.record_source(("127.0.0.1", 50124))
+    for frame, now in ((10, 1.0), (13, 2.0), (12, 3.0)):
+        process_packet(stats, state, packet_factory(3, size=40, frame=frame), now)
+    malformed = bytearray(packet_factory(6, size=1347, frame=14))
+    struct.pack_into("<f", malformed, 24 + 2 * 60 + 2, float("nan"))
+    process_packet(stats, state, bytes(malformed), 4.0)
+    bad_header = bytearray(packet_factory(3, size=40))
+    bad_header[0] = 0
+    process_packet(stats, state, bytes(bad_header), 4.1)
+    report = stats.report(5.0)
+    assert stats.frame_discontinuities == 1
+    assert stats.out_of_order_frames == 1
+    assert stats.payload_invalid_ids[6] == 1
+    assert stats.header_rejected_claimed_ids[3] == 1
+    assert "ID rates: 3:0.6/s, 6:0.2/s" in report
+    assert "frame discontinuities=1" in report
+    assert "UDP source=127.0.0.1:50124, source changes=1" in report
+    assert "packet loss" not in report.lower()
+
+
+def test_loop_stage_diagnostics_are_bounded_and_reset_each_report() -> None:
+    timing = LoopTiming()
+    for sample in range(300):
+        timing.record("decode_state", sample * 1000)
+    summary = timing.drain()["decode_state"]
+    assert summary["count"] == 300
+    assert summary["max_ms"] == 0.299
+    assert len(timing.samples) == 0
+    assert timing.drain() == {}
 
 
 def test_waiting_message_includes_actionable_diagnostics() -> None:
@@ -236,6 +271,55 @@ def test_udp_auto_recording_survives_gap_and_reaches_lap_four(
     assert len(packets) == 5  # Session and four laps; lobby packet is a separate UID.
     assert packets[0] == bytes(session)
     assert load_frames(item["name"])  # The saved entry can be opened in replay.
+
+
+def test_udp_receiver_publishes_dashboard_from_worker(packet_factory, monkeypatch) -> None:
+    from app import dashboard as dashboard_module
+
+    dashboards = []
+
+    class Server:
+        should_exit = False
+
+    class ServerThread:
+        def join(self, timeout=None):
+            pass
+
+    def start_dashboard(state):
+        dashboards.append(state)
+        return ServerThread(), Server()
+
+    monkeypatch.setattr(dashboard_module, "start_dashboard", start_dashboard)
+    messages: Queue[str] = Queue()
+
+    class Output(StringIO):
+        def flush(self) -> None:
+            messages.put(self.getvalue())
+
+    stop = Event()
+    thread = Thread(target=run_receiver, args=(Output(), 0, stop),
+                    kwargs={"dashboard": True})
+    thread.start()
+    try:
+        bound = messages.get(timeout=5)
+        port = int(bound.split("Bound UDP 127.0.0.1:")[1].split(".")[0])
+        session = bytearray(packet_factory(1, size=632, session_uid=1234))
+        session[24 + 6] = 10
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sender:
+            sender.sendto(session, (HOST, port))
+        dashboard = dashboards[0]
+        version = 0
+        deadline = time.monotonic() + 3
+        while time.monotonic() < deadline:
+            version, snapshot = dashboard.wait_for_newer(version, timeout=1)
+            if json.loads(snapshot).get("facts", {}).get("session_uid") == 1234:
+                break
+        else:
+            pytest.fail("UDP packet was not published to the dashboard")
+    finally:
+        stop.set()
+        thread.join(timeout=5)
+    assert not thread.is_alive()
 
 
 def test_explicit_remote_bind_and_sender_filter(packet_factory, monkeypatch, tmp_path) -> None:

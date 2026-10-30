@@ -16,6 +16,7 @@ from .conversation import Conversation
 from .dashboard import DashboardState, HTML, PRACTICE_HTML
 from .engineer import Engineer
 from .intelligence import race_facts
+from .logging_setup import LOGGER
 from .recordings import list_recordings, recording_info
 from .telemetry.session_types import DRIVING_SESSION_TYPES
 from .strategy import StrategyAssumptions
@@ -79,6 +80,11 @@ def load_frames(name: str, pit_loss_seconds: float | None = None,
         publish(now, force=state.timeline.generation != previous_generation)
     if not frames:
         raise ValueError("capture has no driving-session dashboard frames")
+    LOGGER.info("replay event=load_complete name=%s datagrams=%d header_valid=%d "
+                "header_invalid=%d payload_invalid=%d frames=%d first_elapsed=%.3f "
+                "last_elapsed=%.3f recent_timeline_events=%d",
+                name, stats.datagrams, stats.valid, stats.invalid, stats.payload_invalid,
+                len(frames), frames[0].elapsed, frames[-1].elapsed, len(state.timeline.events))
     return frames
 
 
@@ -178,8 +184,11 @@ class ReplayLibrary:
             return self._controller
 
     def select(self, name: str) -> dict:
-        if not isinstance(name, str) or name not in {item["name"] for item in self.recordings()}:
+        item = next((item for item in self.recordings() if item["name"] == name), None)
+        if not isinstance(name, str) or item is None:
             raise ValueError("recording is unavailable")
+        if item["status"] == "unreadable":
+            raise ValueError(f"recording cannot be replayed: {item['error']}")
         with self._loading:
             frames = load_frames(name, self.pit_loss_seconds)
             details = recording_info(name)

@@ -128,6 +128,9 @@ def test_history_worker_flushes_without_receiver_disk_writes(packet_factory: Cal
     worker.observe(state_at(packet_factory, 1.0, 2), 1.0)
     worker.record_advice(123, 2, "Check tyres")
     worker.close()
+    assert worker.enqueued == worker.processed == 2
+    assert worker.dropped == 0
+    assert not worker.thread.is_alive()
     with RaceHistory(path) as history:
         report = history.debrief("123")
     assert report["summary"]["recorded_laps"] == 1
