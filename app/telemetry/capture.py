@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import math
 import re
 import struct
 from typing import BinaryIO, Iterator
@@ -42,14 +43,20 @@ class CaptureWriter:
         self.file.write(MAGIC)
         self.size = len(MAGIC)
         self.max_bytes = max_bytes
+        self.last_elapsed = -1.0
 
     def write(self, elapsed: float, data: bytes) -> bool:
+        if not math.isfinite(elapsed) or elapsed < 0 or elapsed < self.last_elapsed:
+            raise ValueError("capture timestamps must be finite and nondecreasing")
+        if len(data) > 65535:
+            raise ValueError("capture datagram exceeds the record length field")
         record = RECORD.pack(elapsed, len(data))
         if self.size + len(record) + len(data) > self.max_bytes:
             return False
         self.file.write(record)
         self.file.write(data)
         self.size += len(record) + len(data)
+        self.last_elapsed = elapsed
         return True
 
     def close(self) -> None:

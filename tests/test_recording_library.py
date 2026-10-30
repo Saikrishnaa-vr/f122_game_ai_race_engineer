@@ -84,6 +84,68 @@ def test_auto_recording_waits_for_race_and_saves_after_classification(packet_fac
     assert items[0]["name"] != items[1]["name"]
 
 
+def test_unreadable_capture_remains_visible_with_clear_replay_error() -> None:
+    directory = capture.CAPTURE_DIRECTORY
+    directory.mkdir(parents=True)
+    (directory / "broken.f1cap").write_bytes(capture.MAGIC + capture.RECORD.pack(1.0, 40) + b"short")
+    [item] = list_recordings()
+    assert item["status"] == "unreadable"
+    assert "truncated capture datagram" in item["error"]
+    with pytest.raises(ValueError, match="truncated capture datagram"):
+        replay_dashboard.ReplayLibrary().select(item["name"])
+    server = replay_dashboard.create_replay_server(replay_dashboard.ReplayLibrary(), port=0)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        base = f"http://127.0.0.1:{server.server_address[1]}"
+        with urlopen(base + "/api/replays", timeout=3) as response:
+            [listed] = json.load(response)
+        assert listed["status"] == "unreadable"
+        request = Request(base + "/api/select", data=json.dumps({"name": item["name"]}).encode(),
+                          headers={"Content-Type": "application/json"}, method="POST")
+        with pytest.raises(HTTPError) as error:
+            urlopen(request, timeout=3)
+        assert error.value.code == 400
+        assert b"truncated capture datagram" in error.value.read()
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=3)
+
+
+def test_career_finish_then_lan_race_past_lap_two_remain_separate_and_replayable(packet_factory) -> None:
+    recorder = AutoRaceRecorder(StringIO())
+    career = bytearray(session_packet(packet_factory, 1801))
+    career[149] = 0  # Offline network field.
+    career[625] = 19  # Career '22 game mode.
+    career = bytes(career)
+    career_packets = [career, *(lap_packet(packet_factory, 1801, lap) for lap in (1, 2, 3)),
+                      packet_factory(8, size=1015, session_uid=1801)]
+    for now, raw in enumerate(career_packets):
+        recorder.observe(float(now), raw, decode_packet(raw),
+                         decode_payload(raw, decode_packet(raw)) if raw[5] == 1 else None)
+    lan = bytearray(session_packet(packet_factory, 1802, 11))
+    lan[149] = 1
+    lan[625] = 7  # Online Custom, not proof of host/client role.
+    lan = bytes(lan)
+    lan_packets = [lan, *(lap_packet(packet_factory, 1802, lap) for lap in (1, 2, 3, 4))]
+    recorder.tick(30.0)  # Temporary silence after the first race.
+    for now, raw in enumerate(lan_packets, start=31):
+        recorder.observe(float(now), raw, decode_packet(raw),
+                         decode_payload(raw, decode_packet(raw)) if raw[5] == 1 else None)
+    recorder.close()
+    by_uid = {item["session_uid"]: item for item in list_recordings()}
+    assert set(by_uid) == {1801, 1802}
+    assert by_uid[1801]["status"] == "completed"
+    assert by_uid[1801]["game_mode_name"] == "Career '22"
+    assert by_uid[1802]["status"] == "incomplete"
+    assert by_uid[1802]["network_mode"] == "Online"
+    assert by_uid[1802]["last_lap"] == 4
+    for uid, packets in ((1801, career_packets), (1802, lan_packets)):
+        assert [raw for _, raw in capture.read_capture(by_uid[uid]["name"])] == packets
+        assert replay_dashboard.ReplayLibrary().select(by_uid[uid]["name"])["frames"] > 0
+
+
 @pytest.mark.parametrize("session_type", [10, 11, 12])
 def test_race_continues_past_lap_two_through_pause_and_lobby_packets(packet_factory,
                                                                        session_type: int) -> None:

@@ -1,6 +1,12 @@
 # F1 22 AI Race Engineer — project progress
 
-Last updated: 2026-10-29. Project scope and requirements are summarized in the [README](README.md). Runtime evidence: [ten-lap verification](reports/verification-20261028-193443.md) and [completed Grand Prix fixture](reports/grand-prix-20261028-212717.md). Latest dashboard work is described below.
+Last updated: 2026-10-30. Project scope and requirements are summarized in the [README](README.md). Runtime evidence: [ten-lap verification](reports/verification-20261028-193443.md) and [completed Grand Prix fixture](reports/grand-prix-20261028-212717.md). Latest dashboard work is described below.
+
+## Telemetry reliability and latency follow-up (2026-10-30)
+
+The receiver now logs per-ID packet rates, header/payload rejection counts, frame ordering observations, UDP source changes, freshness and stage timings. Dashboard facts and JSON construction run in a bounded one-slot publisher worker using copied state; only obsolete display snapshots are coalesced. SQLite writes remain on a separate worker with queue/drop counters. Raw capture bytes, recording boundaries and replay timing remain on the existing paths. The replay library identifies unreadable captures explicitly instead of hiding them. The optional WebSocket wakes on publication; dependency-free polling remains at 0.5 seconds.
+
+**Offline gate:** 171 tests pass, three inline JavaScript blocks pass syntax checks, and the unchanged Bahrain fixture passes SHA-256 and full replay checks (140,578 packets). The [benchmark and acceptance report](reports/telemetry-reliability-benchmark-20261030.md) records offline CPU/RAM/throughput and stage latency. It does not measure live UDP delivery, browser render delay, FPS or frame times. Career and LAN gameplay, reconnection and SC/VSC Broadcast Experience remain required before calling this reliability/performance work fully validated.
 
 ## Milestone decision
 

@@ -256,6 +256,10 @@ class HistoryWorker:
         self.path = Path(path)
         self.queue: Queue[tuple] = Queue(maxsize=32)
         self.stop = ThreadEvent()
+        self.enqueued = 0
+        self.processed = 0
+        self.dropped = 0
+        self.queue_high_watermark = 0
         self.thread = Thread(target=self._run, name="race-history", daemon=True)
         self.thread.start()
 
@@ -270,7 +274,10 @@ class HistoryWorker:
     def _enqueue(self, item: tuple) -> None:
         try:
             self.queue.put_nowait(item)
+            self.enqueued += 1
+            self.queue_high_watermark = max(self.queue_high_watermark, self.queue.qsize())
         except Full:
+            self.dropped += 1
             LOGGER.warning("History queue full; one record was dropped")
 
     def _run(self) -> None:
@@ -286,6 +293,7 @@ class HistoryWorker:
                             store.observe(item[1], item[2])
                         else:
                             store.record_advice(item[1], item[2], item[3])
+                        self.processed += 1
                     except (OSError, sqlite3.Error, ValueError) as exc:
                         LOGGER.warning("History record skipped: %s", exc)
         except (OSError, sqlite3.Error) as exc:
@@ -293,4 +301,10 @@ class HistoryWorker:
 
     def close(self) -> None:
         self.stop.set()
-        self.thread.join(timeout=3)
+        self.thread.join(timeout=10)
+        LOGGER.info("telemetry event=history_health enqueued=%d processed=%d "
+                    "dropped=%d high_watermark=%d pending=%d worker_alive=%s",
+                    self.enqueued, self.processed, self.dropped,
+                    self.queue_high_watermark, self.queue.qsize(), self.thread.is_alive())
+        if self.thread.is_alive():
+            LOGGER.warning("History worker has not drained; raw capture remains the source of record")

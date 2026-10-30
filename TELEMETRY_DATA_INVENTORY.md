@@ -55,6 +55,8 @@ Final Classification (8) and Lobby Info (9) pass packet validation and are count
 
 The history worker has a bounded queue and can drop a record if overloaded; a packet capture is the better source for reconstructing a detailed timeline. `--no-history` disables SQLite writes. Manual receive without `--record` does not save raw packets; `--drive` automatically captures recognized race Session types 10/11/12. Practice/qualifying raw capture requires `--auto-record-sessions weekend`; `all-driving` also includes Time Trial. Practice laps can populate SQLite independently.
 
+Reliability diagnostics in `logs/race-engineer.log` include header-accepted, payload-decoded and rejected counts by packet ID; rates by ID; last decoded age; observed UDP source IP/port and changes; frame-order observations; connection freshness; receive-loop stage durations; dashboard copy/queue/build and source-to-publication age; history queue pressure; and recording start/stop/size events. Rejected packet IDs extracted from invalid headers are **untrusted claimed bytes**. Frame identifiers are observed separately for each packet type and session; discontinuities do not prove network packet loss because game packet types have different rates. The one-slot dashboard worker may coalesce superseded display snapshots, but it does not remove datagrams from a raw capture. The replay library now lists unreadable `.f1cap` files with an error instead of silently omitting them. See the [offline reliability report](reports/telemetry-reliability-benchmark-20261030.md) for measured limits and live-game checks.
+
 ## Calculations already produced by the companion
 
 These are **derived estimates or presentation**, not extra game telemetry:

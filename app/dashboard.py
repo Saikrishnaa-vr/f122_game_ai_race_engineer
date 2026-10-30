@@ -5,7 +5,8 @@ from collections import deque
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
-from threading import Lock, Thread
+from threading import Condition, Lock, Thread
+import time
 from urllib.parse import parse_qs, urlsplit
 
 from .conversation import Conversation
@@ -23,6 +24,8 @@ class DashboardState:
     def __init__(self, conversation: Conversation | None = None,
                  history_path: str | None = None) -> None:
         self._lock = Lock()
+        self._changed = Condition(self._lock)
+        self._version = 0
         self._snapshot = "{}"
         self._facts: dict = {"fields": {}, "estimates": {}, "strategy": {}}
         self._messages: deque[str] = deque(maxlen=30)
@@ -34,7 +37,7 @@ class DashboardState:
 
     def publish(self, facts: dict, connection: str, performance_mode: bool,
                 voice_status: str = "off") -> None:
-        with self._lock:
+        with self._changed:
             facts["estimates"]["fuel_view"] = self._fuel_view.update(facts)
             self._race_status.update(facts)
             self._facts = facts
@@ -43,6 +46,8 @@ class DashboardState:
                        "facts": facts, "track_map": self._track_map.update(facts),
                        "messages": list(self._messages)}
             self._snapshot = json.dumps(payload, allow_nan=False)
+            self._version += 1
+            self._changed.notify_all()
 
     def message(self, value: str) -> None:
         with self._lock:
@@ -51,6 +56,12 @@ class DashboardState:
     def snapshot(self) -> str:
         with self._lock:
             return self._snapshot
+
+    def wait_for_newer(self, version: int, timeout: float = 1.0) -> tuple[int, str]:
+        """Wake WebSocket clients on publication, without blocking UDP receive."""
+        with self._changed:
+            self._changed.wait_for(lambda: self._version > version, timeout)
+            return self._version, self._snapshot
 
     def ask(self, question: str) -> str:
         with self._lock:
@@ -148,10 +159,15 @@ def create_app(state: DashboardState):
             return
         await ws.accept()
         try:
+            version = -1
+            last_send = 0.0
             while True:
-                await ws.send_text(state.snapshot())
-                await asyncio.sleep(0.5)
-        except (WebSocketDisconnect, RuntimeError):
+                current, snapshot = await asyncio.to_thread(state.wait_for_newer, version)
+                if current != version or time.monotonic() - last_send >= 5:
+                    await ws.send_text(snapshot)
+                    version = current
+                    last_send = time.monotonic()
+        except (WebSocketDisconnect, RuntimeError, OSError):
             return
 
     return app
