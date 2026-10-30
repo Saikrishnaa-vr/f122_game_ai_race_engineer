@@ -390,8 +390,11 @@ def extract_capture(name: str, *, replace: bool = False) -> dict:
     os.close(descriptor)
     temporary_path = Path(temporary)
     try:
+        source_digest = _capture_sha(source)
         with closing(sqlite3.connect(temporary_path)) as db:
-            result = _extract_into(db, name, _capture_sha(source))
+            result = _extract_into(db, name, source_digest)
+        if _capture_sha(source) != source_digest:
+            raise RuntimeError("capture changed during extraction; retry after recording closes")
         if replace:
             os.replace(temporary_path, destination)
         else:

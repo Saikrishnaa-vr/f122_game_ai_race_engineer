@@ -168,3 +168,27 @@ def test_player_index_change_starts_distinct_analysis_segment(
     result = analytics.extract_capture("join.f1cap")
     with closing(sqlite3.connect(result["dataset"])) as db:
         assert db.execute("SELECT player_index FROM segments ORDER BY id").fetchall() == [(2,), (3,)]
+
+
+def test_capture_change_does_not_publish_mismatched_dataset(
+    packet_factory: Callable[..., bytes], monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(capture, "CAPTURE_DIRECTORY", tmp_path / "recordings")
+    monkeypatch.setattr(analytics, "ANALYTICS_DIRECTORY", tmp_path / "analytics")
+    writer = capture.CaptureWriter("changing.f1cap")
+    writer.write(0.0, _session(packet_factory, 1, 10.0))
+    writer.close()
+    original_hash = analytics._capture_sha
+    calls = 0
+
+    def changed_hash(path: Path) -> str:
+        nonlocal calls
+        calls += 1
+        return original_hash(path) if calls == 1 else "changed"
+
+    monkeypatch.setattr(analytics, "_capture_sha", changed_hash)
+    with pytest.raises(RuntimeError, match="changed during extraction"):
+        analytics.extract_capture("changing.f1cap")
+    assert not (tmp_path / "analytics" / "changing.sqlite3").exists()
+    assert not list((tmp_path / "analytics").glob("*.tmp"))
