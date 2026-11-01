@@ -3,8 +3,9 @@ name: Validation
 on:
   pull_request:
     branches: [develop, main]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
-    branches: [develop, main]
+    branches: [develop, main, 'feature/**', 'fix/**', 'docs/**']
   workflow_dispatch:
 
 permissions:

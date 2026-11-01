@@ -2,7 +2,7 @@
 
 `main` is the accepted product baseline. Its first commit contains the current local code and the two published replay fixtures. After that initial import, changes reach `main` only through a pull request from this repository's `develop` branch. The product owner reviews, verifies, and merges that release pull request.
 
-`develop` is the active integration branch. Create each `feature/*` or `fix/*` branch from the latest `develop`, work and test there, and open a pull request back to `develop`. Merge only after the `validate` GitHub Actions job passes. Run the game with `develop` for live feature validation when the change needs it. A passing CI run validates automated behavior and saved replay; it does not prove live UDP capture, visual fit, or game timing.
+`develop` is the active integration branch. Create each `feature/*` or `fix/*` branch from the latest `develop`, work and test there, and open a pull request back to `develop`. Merge only after reviewing a passing `validate` run for the current change. Run the game with `develop` for live feature validation when the change needs it. A passing CI run validates automated behavior and saved replay; it does not prove live UDP capture, visual fit, or game timing.
 
 The release path is:
 
@@ -22,3 +22,5 @@ After the initial `main` and `develop` branches exist, configure GitHub reposito
 - Keep `main` as the default branch so it represents the accepted version. Branch new development from `develop`.
 
 Repository settings, not this file or CI alone, enforce merge permissions. Rule availability and owner-only controls depend on the repository visibility, account plan, and whether the repository is personal or organization-owned. Confirm the effective rules in GitHub after setup by checking that a direct push and an unvalidated PR cannot update either protected branch. The CI release-source check also rejects PRs to `main` unless their head is this repository's `develop` branch.
+
+**Current protection:** Fresh [PR #7](https://github.com/Saikrishnaa-vr/f122_game_ai_race_engineer/pull/7) received successful automatic `push` and `pull_request` Validation runs on opening and after a follow-up push. Both repository rulesets were restored to active on 2026-11-01, and GitHub still reported the PR mergeable with passing checks. Direct-push denial, failing-check blocking and the owner-only release path remain to be exercised. A manually dispatched run does not substitute for a PR check. Use `scripts\inspect_github_validation.ps1 -PullRequest NUMBER` to inspect the current remote state and see [the branch-ruleset handoff](BRANCH_RULESET_HANDOFF.md) for evidence and remaining tests.
