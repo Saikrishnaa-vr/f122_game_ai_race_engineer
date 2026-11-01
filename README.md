@@ -6,7 +6,7 @@ A separate, read-only Windows companion for F1 22's documented 2022 UDP feed. It
 
 Phase 1 connection verification is complete and user-accepted. See [project progress](PROJECT_PROGRESS.md) for phase status, evidence and the next validation plan.
 
-Development uses `feature/*` and `fix/*` branches from `develop`; validated changes enter `develop` by pull request. The product owner promotes `develop` to `main` by release pull request. See [branches and releases](CONTRIBUTING.md) for the checks and GitHub protection settings.
+Development uses `feature/*` and `fix/*` branches from `develop`; validated changes enter `develop` by pull request. The product owner promotes `develop` to `main` by release pull request. See [branches and releases](CONTRIBUTING.md) for the checks and GitHub protection settings. Automatic GitHub Validation triggers and disabled branch rulesets remain under investigation; see the [branch-ruleset handoff](BRANCH_RULESET_HANDOFF.md) before changing protection settings.
 
 ## Compact race dashboard
 

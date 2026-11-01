@@ -1,10 +1,10 @@
 # GitHub branch rules and missing automatic Validation runs
 
-**For:** a contributor investigating repository protection. **Repository:** `Saikrishnaa-vr/f122_game_ai_race_engineer`. **Recorded:** 2026-10-30. This is an open investigation, not a confirmed GitHub service defect.
+**For:** a contributor investigating repository protection. **Repository:** `Saikrishnaa-vr/f122_game_ai_race_engineer`. **Updated:** 2026-11-01. This is an open investigation, not a confirmed GitHub service defect.
 
 ## Intended behavior
 
-`develop` accepts feature and fix pull requests after the `validate` GitHub Actions job passes. `main` receives only owner-reviewed release PRs from `develop`. Both branches should reject direct updates, force pushes and deletion. The workflow in `.github/workflows/validate.yml` declares `pull_request` for `develop` and `main`, `push` for those two branches, and `workflow_dispatch`. A push to a feature branch alone is **not** expected to trigger the current `push` filter. See [CONTRIBUTING.md](CONTRIBUTING.md).
+`develop` accepts feature and fix pull requests after the `validate` GitHub Actions job passes. `main` receives only owner-reviewed release PRs from `develop`. Both branches should reject direct updates, force pushes and deletion. The workflow in `.github/workflows/validate.yml` declares `pull_request` for `develop` and `main`, `push` for those branches and `feature/*`, `fix/*`, `docs/*` branches, and `workflow_dispatch`. Feature-branch pushes are included as a test and fallback while PR-triggered runs are missing. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## What happened
 
@@ -26,6 +26,20 @@
 | A manual `workflow_dispatch` check cannot satisfy a required PR workflow check under GitHub's documented rules. | Whether the `validate` required-check source/context and strict update policy will work once automatic runs exist. |
 | The private-repository ruleset API was unavailable on the owner's free plan; the public repository accepted ruleset creation. | Whether the “owner-only main” ruleset actually restricts every non-owner update path as intended. |
 
+## Current repair attempt
+
+The current `develop` head is `9127cad` (merged analytics PR #6). The old PR #1 head is `250f167`, diverged from `develop` by 13 commits as checked on 2026-11-01. Its one-time publication script is historical and must not be rerun. This replacement work starts from the current `develop` tree, preserves this handoff, and changes only the Validation triggers, contributor guidance and a read-only inspection script. It does **not** turn on either ruleset automatically.
+
+The workflow still listens for PRs to `develop` and `main`. It now explicitly includes `opened`, `synchronize`, `reopened` and `ready_for_review`, and listens for pushes to repository `feature/*`, `fix/*` and `docs/*` branches in addition to `develop` and `main`. The extra push trigger is a diagnostic fallback: [GitHub documents](https://docs.github.com/en/pull-requests/how-tos/merge-and-close-pull-requests/troubleshooting-required-status-checks) that `push` and `pull_request` jobs can supply required PR checks, while a `workflow_dispatch` job on a PR branch cannot. It does not explain why earlier automatic events produced no run. A fresh pushed branch and PR are needed to test the change on GitHub.
+
+From an authenticated PowerShell session, inspect a new open PR without changing settings:
+
+```powershell
+& 'D:\games\F1 22\f1-ai-race-engineer\scripts\inspect_github_validation.ps1' -PullRequest NUMBER
+```
+
+Record whether a `push` run appears for the exact branch head, whether a `pull_request` run is associated with the PR, and whether the `validate` check appears on the head or test-merge commit. If both automatic events are absent, leave the rulesets disabled and investigate GitHub event delivery or workflow approval. If an automatic check appears, first verify it is on the current code and that a new synchronize push produces another run. Only then review the existing rulesets and test enforcement on a throwaway branch/PR before restoring protection to `develop` or `main`.
+
 Possible areas to test include the identity/token that created or updated PRs, a pending workflow-approval banner, commit-message skip annotations, workflow availability on the default branch, PR merge conflicts, and GitHub event delivery. [GitHub's workflow troubleshooting guide](https://docs.github.com/en/actions/how-tos/troubleshoot-workflows) lists these trigger conditions. None is established as the root cause here. Do not change several settings at once or attribute this to GitHub infrastructure without stronger evidence.
 
 ## Contributor investigation plan
@@ -46,7 +60,7 @@ The friend can investigate using a fork or `feature/*` branch and a PR to `devel
 
    A 404 for a branch-protection endpoint can mean no classic protection; inspect rulesets separately. Do not paste credentials or `gh auth token` output into an issue or PR.
 
-2. **Reproduce on a harmless PR.** Make a small documentation-only change on a fresh branch from `develop`, open a PR to `develop`, and note its creation time, head SHA, mergeability, and Actions approval banner if present. Push one more harmless commit to test `synchronize`. Compare `gh run list --event pull_request` with the PR's Checks tab. Do not treat a feature-branch `push` run as required evidence: the current workflow only filters `push` for `develop` and `main`.
+2. **Reproduce on a harmless PR.** Make a small documentation-only change on a fresh branch from `develop`, open a PR to `develop`, and note its creation time, head SHA, mergeability, and Actions approval banner if present. Push one more harmless commit to test `synchronize`. Compare `pull_request` and `push` runs with the PR's Checks tab. A feature-branch `push` run now tests the fallback; it does not prove the PR trigger works.
 3. **Isolate the trigger.** Verify the workflow file exists on the default branch; inspect PR creator authentication **type** without revealing its token; check commit messages for `[skip ci]` or equivalent; confirm no merge conflict or pending workflow approval. Try one manually opened PR through the GitHub web UI if the first test used a CLI or automation token. Record the exact variable changed and the resulting event/run.
 4. **Validate protection separately.** After an automatic PR run appears, check that `validate` is attached to the PR's latest head or test-merge commit and is accepted by a temporary test ruleset. Then have the owner review the two disabled rulesets, their bypass actors, required-check source/context and branch targets before re-enabling them. Test that a failing or absent check blocks a test PR and that a passing automatic PR check allows its intended merge. Use a throwaway protected branch for push-denial experiments; do not make an unvalidated direct update to `main` or `develop`.
 5. **Escalate with evidence if needed.** If the minimal PR still creates no automatic run, send GitHub Support/Community the repository URL, workflow path, PR URL, head SHA, UTC timestamps, Actions settings, and matching manual-run ID. Do not send credentials or private local logs.
