@@ -36,7 +36,9 @@ The workflow still listens for PRs to `develop` and `main`. It now explicitly in
 
 The new [PR #7](https://github.com/Saikrishnaa-vr/f122_game_ai_race_engineer/pull/7) starts from `develop` at `9127cad` and proposes the repaired workflow and this handoff. Its branch push automatically started [run 41259344284](https://github.com/Saikrishnaa-vr/f122_game_ai_race_engineer/actions/runs/41259344284), and opening the PR automatically started [run 41259460240](https://github.com/Saikrishnaa-vr/f122_game_ai_race_engineer/actions/runs/41259460240). Both completed successfully on head `57b8cb4`, and GitHub attached `validate` checks to the PR. This proves automatic push and PR events work for this fresh branch. It does not isolate which change or event resolved the earlier missing runs.
 
-The two repository rulesets were still `disabled` when inspected. The next documentation commit on PR #7 tests `synchronize` and whether both automatic jobs rerun for the new head. After those checks pass, the owner can restore the existing rulesets and verify GitHub accepts the required check. A passing CI run alone does not prove that direct pushes are blocked or that owner-only `main` merge behavior is enforced.
+The documentation update to head `64450dc` triggered another automatic [push run 41259700911](https://github.com/Saikrishnaa-vr/f122_game_ai_race_engineer/actions/runs/41259700911) and [PR run 41259703580](https://github.com/Saikrishnaa-vr/f122_game_ai_race_engineer/actions/runs/41259703580); both passed. GitHub showed the `validate` checks on that head. The `synchronize` trigger is therefore verified for this PR.
+
+On 2026-11-01, ruleset **26126638** (PR, `validate`, deletion and force-push restrictions for `main` and `develop`) and ruleset **26126637** (owner-only update rule for `main`) were restored to `active`. The effective-rules API showed `pull_request` and `required_status_checks` on both branches, plus `update` on `main`. PR #7 remained `MERGEABLE` with `mergeStateStatus: CLEAN` after the shared ruleset was activated. Direct-push denial and a real owner-only release merge have not been exercised; these are separate acceptance checks. Do not treat the API listing alone as proof of every enforcement path.
 
 From an authenticated PowerShell session, inspect a new open PR without changing settings:
 
@@ -73,8 +75,8 @@ The friend can investigate using a fork or `feature/*` branch and a PR to `devel
 
 ## Done when
 
-- A new PR to `develop` automatically creates a `pull_request` Validation run for its current code, and a subsequent push creates a fresh run.
-- A passing PR-triggered `validate` check satisfies the required check; an absent/failing one blocks merge.
-- Rules for `develop` and `main` are re-enabled only after the owner reviews their exact effect, and a controlled test confirms direct updates and deletion are blocked.
+- **Verified on PR #7:** A new PR to `develop` automatically created a `pull_request` Validation run, and a subsequent push created fresh `push` and `pull_request` runs.
+- **Verified on PR #7:** Passing automatic `validate` checks appeared on the latest head, and the PR remained mergeable after the shared ruleset was activated. An absent or failing check has not yet been tested.
+- **Restored:** Rules for `develop` and `main` are active. A controlled test still needs to confirm that direct updates and deletion are blocked.
 - The owner-only `main` path is verified without granting a friend admin/bypass rights; release PRs still originate from `develop`.
 - The final evidence and any remaining GitHub limitation are recorded in this file or a follow-up PR. Until then, the owner must manually review PRs and CI runs; the last known disabled rulesets do not enforce the workflow.
